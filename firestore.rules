@@ -1,0 +1,72 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+    
+    function hasOnboardingComplete() {
+      return resource.data.onboardingComplete == true;
+    }
+    
+    // Users collection - users can read/write their own data
+    match /users/{userId} {
+      allow read, write: if isAuthenticated() && isOwner(userId);
+      allow read: if isAuthenticated(); // Allow reading other users for chat/item display
+    }
+    
+    // Items collection
+    match /items/{itemId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() 
+        && isOwner(resource.data.seller_id)
+        && hasOnboardingComplete();
+      allow update: if isAuthenticated() 
+        && isOwner(resource.data.seller_id);
+      allow delete: if isAuthenticated() 
+        && isOwner(resource.data.seller_id);
+    }
+    
+    // Chats collection
+    match /chats/{chatId} {
+      allow read: if isAuthenticated() 
+        && request.auth.uid in resource.data.participants;
+      allow create: if isAuthenticated() 
+        && request.auth.uid in resource.data.participants;
+      allow update: if isAuthenticated() 
+        && request.auth.uid in resource.data.participants;
+      // No delete - preserve chat history
+    }
+    
+    // Reports collection - users can only create reports
+    match /reports/{reportId} {
+      allow create: if isAuthenticated() 
+        && isOwner(resource.data.userId);
+      // Only admins can read reports (handled by backend functions)
+    }
+    
+    // Push tokens collection (for notifications)
+    match /pushTokens/{tokenId} {
+      allow read, write: if isAuthenticated() 
+        && isOwner(resource.data.userId);
+    }
+    
+    // User interactions (likes, passes, etc.)
+    match /interactions/{interactionId} {
+      allow read, write: if isAuthenticated() 
+        && isOwner(resource.data.userId);
+    }
+    
+    // Analytics collection (optional - for app insights)
+    match /analytics/{eventId} {
+      allow create: if isAuthenticated() 
+        && isOwner(resource.data.userId);
+      // Only backend can read analytics
+    }
+  }
+}

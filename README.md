@@ -1,70 +1,115 @@
-# Getting Started with Create React App
+# SwipeCity - Marketplace App
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+A modern, Tinder-style marketplace app built with React, Capacitor, and Firebase. Users can swipe through local items, chat with sellers, and manage their own listings.
 
-## Available Scripts
+## 🚀 Quick Start
 
-In the project directory, you can run:
+```bash
+# Clone and setup
+git clone <your-repo>
+cd swipecity-mobile
+npm install
 
-### `npm start`
+# Development
+npm run dev:web          # Web development
+npm run build:all        # Full production build
+./deploy.sh ios          # Deploy to iOS
+```
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+## ✨ Features
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+### Core Functionality
+- **Swipe Interface**: Tinder-style browsing of marketplace items
+- **Real-time Chat**: Firebase-powered messaging between buyers/sellers
+- **Image Upload**: Compressed image storage with Firebase Storage
+- **Push Notifications**: FCM notifications for messages and matches
+- **User Authentication**: Email-based passwordless authentication
+- **Offline Support**: Works offline with cached data and service worker
 
-### `npm test`
+### Technical Features
+- **Error Handling**: Comprehensive error boundaries and retry logic
+- **Security**: Firestore security rules and input validation
+- **Performance**: Optimized builds with code splitting and caching
+- **Mobile-First**: Responsive design optimized for mobile devices
+- **Real-time Updates**: Live data synchronization across devices
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+## 🛠️ Development
 
-### `npm run build`
+### Prerequisites
+- Node.js 18+
+- npm or yarn
+- Xcode (for iOS development)
+- Firebase CLI
+- Apple Developer Account (for App Store)
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+### Setup
+1. **Clone repository**
+   ```bash
+   git clone <your-repo>
+   cd swipecity-mobile
+   npm install
+   ```
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+2. **Firebase Configuration**
+   ```bash
+   # Copy and configure environment
+   cp apps/web/.env.example apps/web/.env
+   # Edit with your Firebase config
+   ```
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+3. **Build and Test**
+   ```bash
+   npm run build:all
+   npx cap run ios
+   ```
 
-### `npm run eject`
+### Available Scripts
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+| Command | Description |
+|---------|-------------|
+| `npm run dev:web` | Start web development server |
+| `npm run build:web` | Build web app for production |
+| `npm run build:packages` | Build shared packages |
+| `npm run build:all` | Build everything |
+| `./deploy.sh ios` | Deploy to iOS |
+| `./deploy.sh firebase` | Deploy to Firebase |
+| `node test-setup.js` | Validate configuration |
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+## 🚀 Deployment
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+### Quick Deploy
+```bash
+# iOS App Store
+./deploy.sh ios production
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+# Firebase Web App
+./deploy.sh firebase production
 
-## Learn More
+# Everything
+./deploy.sh all production
+```
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+### Detailed Deployment
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for comprehensive deployment instructions.
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+## 🎯 What's Completed
 
-### Code Splitting
+### ✅ Core Functionality (Production Ready)
+- Real Firebase backend integration (Auth, Firestore, Storage, FCM)
+- Actual image upload/storage with compression and validation
+- Comprehensive error handling with retry mechanisms
+- Offline functionality with graceful degradation
+- Push notifications for messages and matches
+- Security rules and input validation
+- Optimized builds and deployment scripts
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+### 🚀 Ready for App Store
+- Complete Firebase infrastructure
+- iOS Capacitor app configured
+- Production deployment scripts
+- Security and performance optimized
+- Comprehensive testing setup
 
-### Analyzing the Bundle Size
+---
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+Built with ❤️ using React, Capacitor, and Firebase

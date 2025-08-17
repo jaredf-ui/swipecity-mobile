@@ -1,0 +1,86 @@
+.App {
+  text-align: center;
+}
+
+/* Mobile Safe Area Support */
+.mobile-safe-container {
+  padding-top: max(80px, env(safe-area-inset-top) + 60px);
+  padding-bottom: max(20px, env(safe-area-inset-bottom));
+  padding-left: max(20px, env(safe-area-inset-left));
+  padding-right: max(20px, env(safe-area-inset-right));
+}
+
+/* Universal body padding for iOS */
+@supports (-webkit-appearance: none) {
+  body {
+    padding-top: max(60px, env(safe-area-inset-top) + 40px) !important;
+  }
+}
+
+/* Fixed header adjustments for mobile */
+.mobile-header {
+  position: fixed;
+  top: max(0px, env(safe-area-inset-top));
+  left: 0;
+  right: 0;
+  z-index: 1000;
+}
+
+/* Close button improvements for mobile */
+.mobile-close-button {
+  min-width: 44px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  border-radius: 50%;
+  color: white;
+  border: none;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+/* Better touch targets */
+.mobile-touch-target {
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.App-logo {
+  height: 40vmin;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .App-logo {
+    animation: App-logo-spin infinite 20s linear;
+  }
+}
+
+.App-header {
+  background-color: #282c34;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(10px + 2vmin);
+  color: white;
+}
+
+.App-link {
+  color: #61dafb;
+}
+
+@keyframes App-logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
