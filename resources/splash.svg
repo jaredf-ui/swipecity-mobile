@@ -1,0 +1,71 @@
+<svg width="1200" height="2400" viewBox="0 0 1200 2400" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="1200" height="2400" fill="url(#splashGradient)"/>
+  
+  <!-- Gradient Definition -->
+  <defs>
+    <linearGradient id="splashGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#667eea;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#764ba2;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#667eea;stop-opacity:1" />
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+      <feMerge> 
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- Main content centered -->
+  <g transform="translate(600,1200)">
+    <!-- SC Logo Icon -->
+    <g transform="scale(0.8)">
+      <!-- S letter -->
+      <path d="M -120 -80 Q -120 -120 -80 -120 L -40 -120 Q 0 -120 0 -80 Q 0 -40 -40 -40 L -80 -40 Q -120 -40 -120 0 Q -120 40 -80 40 L -40 40 Q 0 40 0 80" 
+            fill="none" stroke="white" stroke-width="20" stroke-linecap="round" filter="url(#glow)"/>
+      
+      <!-- C letter -->
+      <path d="M 120 -80 Q 120 -120 80 -120 L 40 -120 Q 0 -120 0 -80 L 0 80 Q 0 120 40 120 L 80 120 Q 120 120 120 80" 
+            fill="none" stroke="white" stroke-width="20" stroke-linecap="round" filter="url(#glow)"/>
+      
+      <!-- Swipe arrow underneath -->
+      <g transform="translate(0, 180)">
+        <path d="M -100 0 Q -50 -30 0 0 Q 50 30 100 0" 
+              fill="none" stroke="white" stroke-width="12" stroke-linecap="round"/>
+        <path d="M 85 -15 L 100 0 L 85 15" 
+              fill="none" stroke="white" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+      </g>
+    </g>
+    
+    <!-- App Title -->
+    <text x="0" y="250" 
+          font-family="Arial, sans-serif" 
+          font-size="72" 
+          font-weight="bold" 
+          text-anchor="middle" 
+          fill="white"
+          filter="url(#glow)">SwipeCity</text>
+    
+    <!-- Tagline -->
+    <text x="0" y="320" 
+          font-family="Arial, sans-serif" 
+          font-size="28" 
+          text-anchor="middle" 
+          fill="rgba(255,255,255,0.8)">Your Local Marketplace</text>
+    
+    <!-- Loading indicator dots -->
+    <g transform="translate(0,450)">
+      <circle cx="-30" cy="0" r="8" fill="rgba(255,255,255,0.6)">
+        <animate attributeName="opacity" values="0.3;1;0.3" dur="1.5s" repeatCount="indefinite" begin="0s"/>
+      </circle>
+      <circle cx="0" cy="0" r="8" fill="rgba(255,255,255,0.6)">
+        <animate attributeName="opacity" values="0.3;1;0.3" dur="1.5s" repeatCount="indefinite" begin="0.5s"/>
+      </circle>
+      <circle cx="30" cy="0" r="8" fill="rgba(255,255,255,0.6)">
+        <animate attributeName="opacity" values="0.3;1;0.3" dur="1.5s" repeatCount="indefinite" begin="1s"/>
+      </circle>
+    </g>
+  </g>
+</svg>

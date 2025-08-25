@@ -136,6 +136,8 @@ const SwipeMarketplace = () => {
     showAuthModal: false, // Start with false, will be set by useEffect
     showChats: false,
     showProfile: false,
+    showSavedItems: false,
+    savedItemsSearchQuery: '',
     email: '',
     loading: false,
     selectedCategories: [],
@@ -147,14 +149,21 @@ const SwipeMarketplace = () => {
     showMatchAnimation: false,
     matchedItem: null,
     dailySwipeCount: 0,
-    maxDailySwipes: 50,
+    dailyLikeCount: 0,
+    dailySaveCount: 0,
+    maxDailySwipes: 100,
+    maxDailyLikes: 50,
+    maxDailySaves: 20,
+    savedItems: [],
+    likedItems: [],
     showLimitModal: false,
+    limitModalType: null,
     reportedItems: new Set(),
     lastActionTime: 0,
     actionCooldown: 300,
     startPos: null,
     activeChat: null,
-    newMessage: '',
+    newMessage: ','
     chats: [
       {
         id: 'demo_chat',
@@ -638,63 +647,62 @@ const handleEmailAuth = useCallback(async () => {
     }, 1000);
   }, [appState.email, updateState]);
 
-const handleSwipe = useCallback((direction) => {
-    console.log('🎯 handleSwipe called with direction:', direction);
-    console.log('🎯 currentItem:', currentItem?.title);
-    console.log('🎯 currentItemIndex:', appState.currentItemIndex);
+const handleSaveForLater = useCallback(() => {
+    console.log('💾 Save for Later clicked');
+    console.log('💾 currentItem:', currentItem?.title);
     
     const now = Date.now();
     
     // SECURITY: Enhanced rate limiting
     if (!SecurityUtils.checkRateLimit(appState.lastActionTime, appState.actionCooldown)) {
-      console.log('🚫 Rate limit exceeded for swipe action');
+      console.log('🚫 Rate limit exceeded for save action');
       return;
     }
     
     if (!currentItem) {
-      console.log('🚫 No current item or still dragging');
+      console.log('🚫 No current item');
       return;
     }
     
-    // SECURITY: Validate daily limit
-    if (direction === 'right' && appState.dailySwipeCount >= appState.maxDailySwipes) {
-      console.log('🚫 Daily limit reached');
-      updateState({ showLimitModal: true });
+    // Check if item is already saved
+    const isAlreadySaved = appState.savedItems.some(item => item.id === currentItem.id);
+    if (isAlreadySaved) {
+      console.log('⚠️ Item already saved');
+      alert('This item is already in your saved items!');
       return;
     }
     
+    // SECURITY: Validate daily save limit
+    if (appState.dailySaveCount >= appState.maxDailySaves) {
+      console.log('🚫 Daily save limit reached');
+      updateState({ showLimitModal: true, limitModalType: 'saves' });
+      return;
+    }
+    
+    // Add to saved items
+    const newSavedItems = [...appState.savedItems, { ...currentItem, savedAt: Date.now() }];
     const nextIndex = appState.currentItemIndex < items.length - 1 ? appState.currentItemIndex + 1 : 0;
-    console.log('🎯 Next index will be:', nextIndex);
-
-    const newSwipeCount = appState.dailySwipeCount + 1;
     
-    if (direction === 'right') {
-      console.log('🎯 Processing RIGHT swipe');
-      // ... rest of the function
-      
-      if (currentItem.seller_interested) {
-        updateState({ 
-          showMatchAnimation: true,
-          matchedItem: currentItem,
-          currentItemIndex: nextIndex,
-          dailySwipeCount: newSwipeCount,
-          lastActionTime: now,
-          canUndo: false
-        });
-      } else {
-        updateState({ currentItemIndex: nextIndex, dailySwipeCount: newSwipeCount, lastActionTime: now, canUndo: false });
-        console.log(`🔔 Seller notification: Interest in ${currentItem.title}`);
-      }
-    } else {
-      updateState({ 
-        currentItemIndex: nextIndex, 
-        lastActionTime: now,
-        lastPassedItem: currentItem,
-        canUndo: true
-      });
-      console.log(`👍 Passed on ${currentItem.title} - doesn't count against daily limit`);
-    }
-}, [currentItem, appState.currentItemIndex, appState.dailySwipeCount, appState.maxDailySwipes, appState.lastActionTime, appState.actionCooldown, appState.isDragging, items.length, updateState, appState.canUndo, appState.lastPassedItem]);  const handleUndo = useCallback(() => {
+    updateState({ 
+      savedItems: newSavedItems,
+      dailySaveCount: appState.dailySaveCount + 1,
+      currentItemIndex: nextIndex,
+      lastActionTime: now,
+      canUndo: false
+    });
+    
+    console.log(`✅ Saved ${currentItem.title} for later (${appState.dailySaveCount + 1}/${appState.maxDailySaves} today)`);
+}, [currentItem, appState.savedItems, appState.dailySaveCount, appState.maxDailySaves, appState.lastActionTime, appState.actionCooldown, appState.currentItemIndex, items.length, updateState]);
+
+const handleSwipe = useCallback((direction) => {
+    console.log('➡️ Swiping:', direction);
+    const nextIndex = appState.currentItemIndex < items.length - 1 ? appState.currentItemIndex + 1 : 0;
+    updateState({ 
+      currentItemIndex: nextIndex,
+      lastPassedItem: currentItem,
+      canUndo: true
+    });
+}, [appState.currentItemIndex, items.length, currentItem, updateState]);  const handleUndo = useCallback(() => {
     if (appState.canUndo && appState.lastPassedItem) {
       // Go back to the passed item
       const lastItemIndex = items.findIndex(item => item.id === appState.lastPassedItem.id);
@@ -1694,109 +1702,126 @@ if (!appState.showAddItem) {
           )}
         </div>
 
-{/* Action Buttons - Maximum clearance from browser UI */}
+{/* Action Buttons - Single Save for Later button */}
 <div style={{
   padding: '20px',
   display: 'flex',
-  justifyContent: 'center',
-  alignItems: 'center', // Added for better vertical alignment
-  gap: appState.canUndo ? '20px' : '50px', // Smaller gap when undo is present
+  flexDirection: 'column',
+  alignItems: 'center',
+  gap: '15px',
   background: 'rgba(255,255,255,0.1)',
   backdropFilter: 'blur(10px)',
   paddingBottom: 'max(100px, env(safe-area-inset-bottom) + 85px)',
   position: 'relative',
-  minHeight: '120px' // Ensure minimum height for button area
+  minHeight: '140px' // Ensure minimum height for button area
 }}>
-  {appState.canUndo && (
+  <button
+    onClick={handleSaveForLater}
+    disabled={!currentItem || appState.isDragging}
+    style={{
+      width: '200px',
+      height: '50px',
+      borderRadius: '25px',
+      border: '3px solid white',
+      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+      color: 'white',
+      cursor: 'pointer',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: '10px',
+      boxShadow: '0 8px 25px rgba(102, 126, 234, 0.4)',
+      opacity: (!currentItem || appState.isDragging) ? 0.5 : 1,
+      transform: 'scale(1)',
+      transition: 'all 0.2s ease',
+      fontSize: '16px',
+      fontWeight: 'bold',
+      WebkitTapHighlightColor: 'transparent',
+      // Mobile-specific touch improvements
+      touchAction: 'manipulation',
+      userSelect: 'none'
+    }}
+  >
+    💾 Save for Later
+  </button>
+  
+  <div style={{
+    display: 'flex',
+    gap: '20px',
+    alignItems: 'center'
+  }}>
     <button
-      onClick={handleUndo}
+      onClick={() => handleSwipe('left')}
+      disabled={!currentItem || appState.isDragging}
       style={{
-        width: '55px',         // Slightly larger for mobile
-        height: '55px',        // Slightly larger for mobile
-        borderRadius: '50%',
-        border: '3px solid white',
-        background: '#ff9800',
+        padding: '8px 20px',
+        borderRadius: '20px',
+        border: '2px solid rgba(255,255,255,0.5)',
+        background: 'rgba(255,255,255,0.1)',
         color: 'white',
         cursor: 'pointer',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        boxShadow: '0 6px 20px rgba(255, 152, 0, 0.5)', // Enhanced shadow
-        fontSize: '24px',      // Larger font for mobile
-        fontWeight: 'bold',
+        fontSize: '14px',
+        fontWeight: '600',
+        opacity: (!currentItem || appState.isDragging) ? 0.5 : 1,
         WebkitTapHighlightColor: 'transparent',
-        // Mobile-specific touch improvements
         touchAction: 'manipulation',
         userSelect: 'none'
       }}
     >
-      ↶
+      Skip
     </button>
-  )}
-
-  <button
-    onClick={() => {
-      console.log('❌ PASS button clicked on mobile');
-      handleSwipe('left');
-    }}
-    disabled={!currentItem || appState.isDragging}
-    style={{
-      width: '70px',
-      height: '70px',
-      borderRadius: '50%',
-      border: '4px solid white',
-      background: '#ff4444',
-      color: 'white',
-      cursor: 'pointer',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      boxShadow: '0 8px 25px rgba(255, 68, 68, 0.6)',
-      opacity: (!currentItem || appState.isDragging) ? 0.5 : 1,
-      transform: 'scale(1)',
-      transition: 'all 0.2s ease',
-      fontSize: '28px',
-      fontWeight: 'bold',
-      WebkitTapHighlightColor: 'transparent',
-      // Mobile-specific touch improvements
-      touchAction: 'manipulation',
-      userSelect: 'none'
-    }}
-  >
-    ✕
-  </button>
-
-  <button
-    onClick={() => {
-      console.log('❤️ LIKE button clicked on mobile');
-      handleSwipe('right');
-    }}
-    disabled={!currentItem || appState.isDragging}
-    style={{
-      width: '70px',
-      height: '70px',
-      borderRadius: '50%',
-      border: '4px solid white',
-      background: '#4CAF50',
-      color: 'white',
-      cursor: 'pointer',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      boxShadow: '0 8px 25px rgba(76, 175, 80, 0.6)',
-      opacity: (!currentItem || appState.isDragging) ? 0.5 : 1,
-      transform: 'scale(1)',
-      transition: 'all 0.2s ease',
-      fontSize: '28px',
-      fontWeight: 'bold',
-      WebkitTapHighlightColor: 'transparent',
-      // Mobile-specific touch improvements
-      touchAction: 'manipulation',
-      userSelect: 'none'
-    }}
-  >
-    ❤️
-  </button>
+    
+    {appState.canUndo && (
+      <button
+        onClick={handleUndo}
+        style={{
+          padding: '8px 20px',
+          borderRadius: '20px',
+          border: '2px solid rgba(255,255,255,0.5)',
+          background: 'rgba(255, 152, 0, 0.2)',
+          color: 'white',
+          cursor: 'pointer',
+          fontSize: '14px',
+          fontWeight: '600',
+          WebkitTapHighlightColor: 'transparent',
+          touchAction: 'manipulation',
+          userSelect: 'none'
+        }}
+      >
+        ↶ Undo
+      </button>
+    )}
+    
+    <button
+      onClick={() => updateState({ showSavedItems: true })}
+      style={{
+        padding: '8px 20px',
+        borderRadius: '20px',
+        border: '2px solid rgba(255,255,255,0.5)',
+        background: 'rgba(102, 126, 234, 0.2)',
+        color: 'white',
+        cursor: 'pointer',
+        fontSize: '14px',
+        fontWeight: '600',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '5px',
+        WebkitTapHighlightColor: 'transparent',
+        touchAction: 'manipulation',
+        userSelect: 'none'
+      }}
+    >
+      🔍 View Saved ({appState.savedItems.length})
+    </button>
+  </div>
+  
+  <div style={{
+    fontSize: '12px',
+    color: 'rgba(255,255,255,0.7)',
+    textAlign: 'center'
+  }}>
+    {appState.dailySaveCount}/{appState.maxDailySaves} saves today
+  </div>
 </div>
 
         {/* Match Animation Modal */}
@@ -3931,6 +3956,224 @@ if (!appState.showAddItem) {
           }}
           onClick={() => updateState({ showProfile: false })}
         />
+      )}
+      
+      {/* Saved Items Modal */}
+      {appState.showSavedItems && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0,0,0,0.8)',
+          zIndex: 1000,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '20px'
+        }}>
+          <div style={{
+            background: 'white',
+            borderRadius: '20px',
+            maxWidth: '500px',
+            width: '100%',
+            maxHeight: '80vh',
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column'
+          }}>
+            {/* Header */}
+            <div style={{
+              padding: '20px',
+              borderBottom: '1px solid #eee',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between'
+            }}>
+              <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 'bold' }}>
+                💾 Saved Items ({appState.savedItems.length}/{appState.maxDailySaves})
+              </h2>
+              <button
+                onClick={() => updateState({ showSavedItems: false })}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  fontSize: '24px',
+                  cursor: 'pointer',
+                  color: '#666'
+                }}
+              >
+                ×
+              </button>
+            </div>
+            
+            {/* Search Bar */}
+            <div style={{ padding: '15px 20px' }}>
+              <input
+                type="text"
+                placeholder="Search saved items..."
+                value={appState.savedItemsSearchQuery}
+                onChange={(e) => updateState({ savedItemsSearchQuery: e.target.value })}
+                style={{
+                  width: '100%',
+                  padding: '12px 15px',
+                  borderRadius: '10px',
+                  border: '1px solid #ddd',
+                  fontSize: '14px',
+                  outline: 'none'
+                }}
+              />
+            </div>
+            
+            {/* Saved Items List */}
+            <div style={{
+              flex: 1,
+              overflowY: 'auto',
+              padding: '0 20px 20px'
+            }}>
+              {appState.savedItems.length === 0 ? (
+                <div style={{
+                  textAlign: 'center',
+                  padding: '40px 20px',
+                  color: '#999'
+                }}>
+                  <p style={{ fontSize: '16px', marginBottom: '10px' }}>No saved items yet</p>
+                  <p style={{ fontSize: '14px' }}>Items you save will appear here for easy comparison</p>
+                </div>
+              ) : (
+                appState.savedItems
+                  .filter(item => {
+                    const query = appState.savedItemsSearchQuery.toLowerCase();
+                    return !query || 
+                      item.title.toLowerCase().includes(query) ||
+                      item.description.toLowerCase().includes(query) ||
+                      item.price.toString().includes(query);
+                  })
+                  .map((item, index) => (
+                    <div key={item.id} style={{
+                      display: 'flex',
+                      gap: '15px',
+                      padding: '15px',
+                      background: '#f9f9f9',
+                      borderRadius: '12px',
+                      marginBottom: '10px',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s ease'
+                    }}>
+                      <img
+                        src={item.image_url}
+                        alt={item.title}
+                        style={{
+                          width: '80px',
+                          height: '80px',
+                          objectFit: 'cover',
+                          borderRadius: '8px'
+                        }}
+                      />
+                      <div style={{ flex: 1 }}>
+                        <h3 style={{
+                          margin: '0 0 5px 0',
+                          fontSize: '16px',
+                          fontWeight: '600',
+                          color: '#333'
+                        }}>
+                          {item.title}
+                        </h3>
+                        <p style={{
+                          margin: '0 0 5px 0',
+                          fontSize: '18px',
+                          fontWeight: 'bold',
+                          color: '#4CAF50'
+                        }}>
+                          ${item.price}
+                        </p>
+                        <p style={{
+                          margin: 0,
+                          fontSize: '12px',
+                          color: '#999'
+                        }}>
+                          Saved {new Date(item.savedAt).toLocaleDateString()}
+                        </p>
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const newSavedItems = appState.savedItems.filter(i => i.id !== item.id);
+                          updateState({ savedItems: newSavedItems });
+                        }}
+                        style={{
+                          background: '#ff4444',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '8px',
+                          padding: '8px 12px',
+                          fontSize: '12px',
+                          cursor: 'pointer',
+                          alignSelf: 'flex-start'
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Daily Limit Modal */}
+      {appState.showLimitModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0,0,0,0.8)',
+          zIndex: 1001,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '20px'
+        }}>
+          <div style={{
+            background: 'white',
+            borderRadius: '20px',
+            padding: '30px',
+            maxWidth: '400px',
+            width: '100%',
+            textAlign: 'center'
+          }}>
+            <h2 style={{ marginBottom: '15px', color: '#ff9800' }}>
+              🚫 Daily Limit Reached
+            </h2>
+            <p style={{ marginBottom: '20px', color: '#666' }}>
+              {appState.limitModalType === 'saves' 
+                ? `You've reached your daily limit of ${appState.maxDailySaves} saves.`
+                : `You've reached your daily limit of ${appState.maxDailyLikes} likes.`
+              }
+              <br />
+              Come back tomorrow to continue!
+            </p>
+            <button
+              onClick={() => updateState({ showLimitModal: false, limitModalType: null })}
+              style={{
+                background: '#667eea',
+                color: 'white',
+                border: 'none',
+                borderRadius: '25px',
+                padding: '12px 30px',
+                fontSize: '16px',
+                fontWeight: 'bold',
+                cursor: 'pointer'
+              }}
+            >
+              Got it!
+            </button>
+          </div>
+        </div>
       )}
     </>
   );

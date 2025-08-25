@@ -1,8 +1,20 @@
 import React, { useState, useEffect, createContext, useContext, useCallback, useMemo } from 'react';
 import { MessageCircle, User, LogOut, Camera } from 'lucide-react';
+import AdminDashboard from './components/AdminDashboard';
+import SkeletonCard from './components/SkeletonCard';
+import { SwipeFeedback, LoadingSpinner, MatchSuccessAnimation } from './components/SwipeFeedback';
+import { DataService } from './utils/dataIntegration';
+import { testImageGeneration } from './utils/dataSeeding';
 // Inline shared data for Capacitor compatibility
 const SecurityUtils = {
   sanitizeInput: (input) => {
+    if (typeof input !== 'string') return '';
+    return input
+      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+      .replace(/javascript:/gi, '')
+      .replace(/on\w+\s*=/gi, '');
+  },
+  sanitizeInputFinal: (input) => {
     if (typeof input !== 'string') return '';
     return input
       .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
@@ -127,8 +139,106 @@ const categories = [
   '💪 Fitness'
 ];
 
+// Onboarding Button Bar Component - Fixed position for consistency
+const OnboardingButtonBar = ({ 
+  onBack, onNext, onSkip, 
+  showBack = true, showSkip = false, 
+  nextText = "Continue →", backText = "← Back", skipText = "Skip"
+}) => {
+  return (
+    <div style={{
+      position: 'fixed',
+      bottom: 'max(40px, env(safe-area-inset-bottom) + 10px)', // Lower positioning
+      left: 'max(20px, env(safe-area-inset-left))',
+      right: 'max(20px, env(safe-area-inset-right))',
+      display: 'flex',
+      gap: '15px',
+      justifyContent: 'space-between',
+      zIndex: 1000,
+      padding: '16px 20px',
+      background: 'rgba(255,255,255,0.95)',
+      borderRadius: '20px',
+      backdropFilter: 'blur(15px)',
+      boxShadow: '0 8px 32px rgba(0,0,0,0.1), 0 0 0 1px rgba(255,255,255,0.2)',
+      border: '1px solid rgba(255,255,255,0.3)'
+    }}>
+      {/* Left side - Back/Skip */}
+      <div style={{ display: 'flex', gap: '12px' }}>
+        {showBack && (
+          <button
+            onClick={onBack}
+            style={{
+              background: 'rgba(255,255,255,0.8)',
+              color: '#666',
+              border: '1px solid rgba(0,0,0,0.08)',
+              borderRadius: '16px',
+              padding: '12px 20px',
+              fontSize: '14px',
+              fontWeight: '500',
+              cursor: 'pointer',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+              transition: 'all 0.2s ease'
+            }}
+          >
+            {backText}
+          </button>
+        )}
+        {showSkip && (
+          <button
+            onClick={onSkip}
+            style={{
+              background: 'rgba(255,255,255,0.6)',
+              color: '#888',
+              border: '1px solid rgba(0,0,0,0.06)',
+              borderRadius: '16px',
+              padding: '12px 20px',
+              fontSize: '14px',
+              fontWeight: '500',
+              cursor: 'pointer',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+              transition: 'all 0.2s ease'
+            }}
+          >
+            {skipText}
+          </button>
+        )}
+      </div>
+      
+      {/* Right side - Next/Continue */}
+      {onNext && (
+        <button
+          onClick={onNext}
+          style={{
+            background: 'linear-gradient(135deg, #4CAF50, #45a049)',
+            color: 'white',
+            border: 'none',
+            borderRadius: '16px',
+            padding: '12px 28px',
+            fontSize: '14px',
+            fontWeight: '600',
+            cursor: 'pointer',
+            boxShadow: '0 4px 16px rgba(76, 175, 80, 0.25)',
+            minWidth: '120px',
+            transition: 'all 0.2s ease'
+          }}
+        >
+          {nextText}
+        </button>
+      )}
+    </div>
+  );
+};
+
 // Bottom Navigation Component
-const BottomNavigation = ({ currentView, currentMode, onViewChange, onModeChange }) => {
+const BottomNavigation = ({ currentView, currentMode, onViewChange, onModeChange, onShowTutorial }) => {
+  // Detect if we're on Android (Capacitor provides this info)
+  const isAndroid = /android/i.test(navigator.userAgent) || window.Capacitor?.getPlatform?.() === 'android';
+  
+  // Android needs extra padding for system navigation bar
+  const bottomPadding = isAndroid 
+    ? 'max(48px, env(safe-area-inset-bottom))' // 48px for Android nav bar
+    : 'max(8px, env(safe-area-inset-bottom))';  // iOS uses safe area
+  
   return (
     <div style={{
       position: 'fixed',
@@ -138,7 +248,7 @@ const BottomNavigation = ({ currentView, currentMode, onViewChange, onModeChange
       background: 'white',
       borderTop: '1px solid #e0e0e0',
       display: 'flex',
-      paddingBottom: 'max(8px, env(safe-area-inset-bottom))',
+      paddingBottom: bottomPadding,
       paddingTop: '4px',
       zIndex: 1000,
       boxShadow: '0 -2px 10px rgba(0,0,0,0.1)'
@@ -210,12 +320,33 @@ const BottomNavigation = ({ currentView, currentMode, onViewChange, onModeChange
             cursor: 'pointer',
             padding: '4px',
             color: currentView === 'chats' ? '#667eea' : '#999',
-            minWidth: '80px'
+            minWidth: '60px'
           }}
         >
           <div style={{ fontSize: '20px', marginBottom: '2px' }}>💬</div>
           <span style={{ fontSize: '9px', fontWeight: 'bold' }}>Chats</span>
         </button>
+
+        {/* Help button only shown in buyer mode */}
+        {currentMode === 'buyer' && (
+          <button
+            onClick={onShowTutorial}
+            style={{
+              background: 'none',
+              border: 'none',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              cursor: 'pointer',
+              padding: '4px',
+              color: '#999',
+              minWidth: '60px'
+            }}
+          >
+            <div style={{ fontSize: '20px', marginBottom: '2px' }}>❓</div>
+            <span style={{ fontSize: '9px', fontWeight: 'bold' }}>Help</span>
+          </button>
+        )}
 
         <button
           onClick={() => onViewChange('profile')}
@@ -228,7 +359,7 @@ const BottomNavigation = ({ currentView, currentMode, onViewChange, onModeChange
             cursor: 'pointer',
             padding: '4px',
             color: currentView === 'profile' ? '#667eea' : '#999',
-            minWidth: '80px'
+            minWidth: '60px'
           }}
         >
           <div style={{ fontSize: '20px', marginBottom: '2px' }}>👤</div>
@@ -243,15 +374,16 @@ const BottomNavigation = ({ currentView, currentMode, onViewChange, onModeChange
 const CloseButton = ({ onClick, color = 'white', backgroundColor = 'rgba(255,255,255,0.2)', size = '44px' }) => {
   const handleClose = (e) => {
     e.preventDefault();
-    e.stopPropagation();
-    onClick();
+    e.stopPropagation(); // Prevent event bubbling but allow button click
+    console.log('CloseButton clicked, calling onClick'); // Debug log
+    if (onClick) {
+      onClick();
+    }
   };
 
   return (
     <button
       onClick={handleClose}
-      onTouchStart={handleClose}
-      onTouchEnd={handleClose}
       style={{
         background: backgroundColor,
         border: 'none',
@@ -341,6 +473,36 @@ const authListeners = new Set();
 
 const setGlobalUser = (user) => {
   globalUser = user;
+  
+  if (user) {
+    // Store in localStorage for persistence
+    localStorage.setItem('swipecity_user', JSON.stringify(user));
+    
+    // Also save to Firebase if the user has an ID
+    if (user.id) {
+      // Save to Firebase in background (non-blocking)
+      try {
+        if (window.firebaseService && window.firebaseService.updateUser) {
+          window.firebaseService.updateUser(user.id, {
+            email: user.email,
+            name: user.name,
+            avatar_url: user.avatar_url,
+            onboardingComplete: user.onboardingComplete,
+            preferences: user.preferences,
+            updatedAt: new Date().toISOString()
+          }).catch(error => {
+            console.warn('Failed to save user to Firebase:', error);
+            // Continue anyway - localStorage backup is available
+          });
+        }
+      } catch (error) {
+        console.warn('Firebase service not available for user save:', error);
+      }
+    }
+  } else {
+    localStorage.removeItem('swipecity_user');
+  }
+  
   authListeners.forEach(listener => listener(user));
 };
 
@@ -406,9 +568,6 @@ const AuthProvider = ({ children }) => {
       };
       setGlobalUser(updatedUser);
       
-      // Store in localStorage for persistence
-      localStorage.setItem('swipecity_user', JSON.stringify(updatedUser));
-      
       console.log('✅ User preferences updated:', updatedUser);
       return { success: true };
     } catch (error) {
@@ -442,6 +601,20 @@ const useAuth = () => useContext(AuthContext);
 const SwipeMarketplace = () => {
   const { user, isAuthenticated, needsOnboarding, signOut, updateUserPreferences } = useAuth();
   
+  // State for seeded items from admin dashboard
+  const [seededItems, setSeededItems] = useState([]);
+  const [loadingItems, setLoadingItems] = useState(true);
+  const [performanceStats, setPerformanceStats] = useState({
+    swipeCount: 0,
+    lastSwipeTime: 0,
+    avgSwipeTime: 0,
+    showStats: false
+  });
+  
+  // Animations always enabled
+  const [showSwipeFeedback, setShowSwipeFeedback] = useState(null);
+  const [showMatchAnimation, setShowMatchAnimation] = useState(false);
+  
   // Debug logging
   console.log('SwipeMarketplace render:', { 
     user: user ? { id: user.id, email: user.email, onboardingComplete: user.onboardingComplete } : null, 
@@ -457,23 +630,44 @@ const SwipeMarketplace = () => {
     showChats: false,
     showProfile: false,
     showMyListings: false,
+    showSavedItems: false,
+    savedItemsSearchQuery: '',
     email: '',
     loading: false,
     selectedCategories: [],
     priceRange: '',
     shoppingStyle: '',
     onboardingStep: 1,
+    // New onboarding fields
+    searchKeywords: '',
+    selectedShoppingCategories: [], // For category selection
+    minPrice: 10,
+    maxPrice: 500,
+    searchRadius: 15,
+    conditionPreference: 'any',
+    wantDealAlerts: false,
+    showSwipeTutorial: false,
+    hasSeenTutorial: false,
+    hasSeenBuyModeTutorial: false,
     dragOffset: { x: 0, y: 0 },
     isDragging: false,
     showMatchAnimation: false,
     matchedItem: null,
     dailySwipeCount: 0,
+    dailyLikeCount: 0,
+    dailySaveCount: 0,
     maxDailySwipes: 50,
+    maxDailyLikes: 50,
+    maxDailySaves: 20,
+    savedItems: [],
+    likedItems: [],
     showLimitModal: false,
-    reportedItems: new Set(),
+    limitModalType: null,
     lastActionTime: 0,
     actionCooldown: 300,
     startPos: null,
+    // Admin dashboard
+    showAdminDashboard: false,
     activeChat: null,
     newMessage: '',
     chats: mockChats,
@@ -492,6 +686,18 @@ const SwipeMarketplace = () => {
     editDescription: '',
     editCondition: '',
     editImages: [],
+    // Bot prevention & reporting
+    showCameraCapture: false,
+    verificationQuestion: null,
+    verificationAnswer: '',
+    verificationPassed: false,
+    reportedItems: new Set(),
+    userReportCount: 0,
+    showReportModal: false,
+    reportingItem: null,
+    selectedReportReason: '',
+    editingBio: false,
+    tempBio: '',
     userListings: [
       // Example listing to show interests
       {
@@ -508,7 +714,7 @@ const SwipeMarketplace = () => {
       }
     ],
     buyerInterests: [
-      // Example interests for demo
+      // Example interests for demo - Added more for testing scrolling
       {
         id: 'interest_demo_1',
         itemId: '1', // Nike Air Jordans
@@ -533,6 +739,58 @@ const SwipeMarketplace = () => {
         sellerName: 'Mike Chen',
         sellerId: 'seller1',
         timestamp: Date.now() - 7200000, // 2 hours ago
+        status: 'pending'
+      },
+      {
+        id: 'interest_demo_3',
+        itemId: '1', // Nike Air Jordans
+        buyerId: 'buyer_3',
+        buyerName: 'David Kim',
+        buyerAvatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&h=150&fit=crop&crop=face',
+        itemTitle: 'Nike Air Jordans',
+        itemImage: 'https://images.unsplash.com/photo-1556906781-9a412961c28c?w=400&h=400&fit=crop',
+        sellerName: 'Mike Chen',
+        sellerId: 'seller1',
+        timestamp: Date.now() - 10800000, // 3 hours ago
+        status: 'pending'
+      },
+      {
+        id: 'interest_demo_4',
+        itemId: '1', // Nike Air Jordans
+        buyerId: 'buyer_4',
+        buyerName: 'Emily Rodriguez',
+        buyerAvatar: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=150&h=150&fit=crop&crop=face',
+        itemTitle: 'Nike Air Jordans',
+        itemImage: 'https://images.unsplash.com/photo-1556906781-9a412961c28c?w=400&h=400&fit=crop',
+        sellerName: 'Mike Chen',
+        sellerId: 'seller1',
+        timestamp: Date.now() - 14400000, // 4 hours ago
+        status: 'pending'
+      },
+      {
+        id: 'interest_demo_5',
+        itemId: '1', // Nike Air Jordans
+        buyerId: 'buyer_5',
+        buyerName: 'Marcus Johnson',
+        buyerAvatar: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=face',
+        itemTitle: 'Nike Air Jordans',
+        itemImage: 'https://images.unsplash.com/photo-1556906781-9a412961c28c?w=400&h=400&fit=crop',
+        sellerName: 'Mike Chen',
+        sellerId: 'seller1',
+        timestamp: Date.now() - 18000000, // 5 hours ago
+        status: 'pending'
+      },
+      {
+        id: 'interest_demo_6',
+        itemId: '1', // Nike Air Jordans
+        buyerId: 'buyer_6',
+        buyerName: 'Jessica Taylor',
+        buyerAvatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&h=150&fit=crop&crop=face',
+        itemTitle: 'Nike Air Jordans',
+        itemImage: 'https://images.unsplash.com/photo-1556906781-9a412961c28c?w=400&h=400&fit=crop',
+        sellerName: 'Mike Chen',
+        sellerId: 'seller1',
+        timestamp: Date.now() - 21600000, // 6 hours ago
         status: 'pending'
       }
     ], // { itemId, buyerId, buyerName, buyerAvatar, timestamp }
@@ -683,21 +941,107 @@ const SwipeMarketplace = () => {
             transactionType: 'buyer'
           }
         ]
+      },
+      'buyer_3': {
+        id: 'buyer_3',
+        name: 'David Kim',
+        avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&h=150&fit=crop&crop=face',
+        joinDate: '2023-10-15',
+        verified: true,
+        phoneVerified: true,
+        emailVerified: true,
+        idVerified: false,
+        facebookVerified: false,
+        linkedinVerified: true,
+        backgroundCheck: false,
+        trustScore: 78,
+        totalSales: 3,
+        totalPurchases: 7,
+        rating: 4.2,
+        reviewCount: 5,
+        responseTime: '2.5h',
+        location: 'Oakland, CA',
+        badges: ['verified', 'new-buyer']
+      },
+      'buyer_4': {
+        id: 'buyer_4',
+        name: 'Emily Rodriguez',
+        avatar: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=150&h=150&fit=crop&crop=face',
+        joinDate: '2023-09-28',
+        verified: true,
+        phoneVerified: true,
+        emailVerified: true,
+        idVerified: true,
+        facebookVerified: true,
+        linkedinVerified: false,
+        backgroundCheck: true,
+        trustScore: 92,
+        totalSales: 6,
+        totalPurchases: 18,
+        rating: 4.7,
+        reviewCount: 12,
+        responseTime: '1.2h',
+        location: 'Fremont, CA',
+        badges: ['verified', 'reliable-buyer', 'trust-verified']
+      },
+      'buyer_5': {
+        id: 'buyer_5',
+        name: 'Marcus Johnson',
+        avatar: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=face',
+        joinDate: '2023-11-05',
+        verified: true,
+        phoneVerified: true,
+        emailVerified: true,
+        idVerified: false,
+        facebookVerified: true,
+        linkedinVerified: true,
+        backgroundCheck: false,
+        trustScore: 85,
+        totalSales: 4,
+        totalPurchases: 14,
+        rating: 4.5,
+        reviewCount: 9,
+        responseTime: '1.5h',
+        location: 'San Mateo, CA',
+        badges: ['verified', 'social-verified']
+      },
+      'buyer_6': {
+        id: 'buyer_6',
+        name: 'Jessica Taylor',
+        avatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&h=150&fit=crop&crop=face',
+        joinDate: '2023-12-20',
+        verified: true,
+        phoneVerified: true,
+        emailVerified: true,
+        idVerified: true,
+        facebookVerified: false,
+        linkedinVerified: false,
+        backgroundCheck: true,
+        trustScore: 90,
+        totalSales: 7,
+        totalPurchases: 20,
+        rating: 4.8,
+        reviewCount: 13,
+        responseTime: '1h',
+        location: 'Mountain View, CA',
+        badges: ['verified', 'fast-responder', 'trust-verified']
       }
     }
   });
 
-  const items = useMemo(() => 
-    mockItems
+  const items = useMemo(() => {
+    // Use seeded items if available, otherwise fall back to mockItems
+    const sourceItems = seededItems.length > 0 ? seededItems : mockItems;
+    
+    return sourceItems
       .map(item => ({
         ...item,
         algorithmScore: user?.preferences?.categories?.includes(categories.indexOf(item.category)) 
-          ? item.algorithmScore 
-          : item.algorithmScore * 0.3
+          ? (item.algorithmScore || 0.8) // Default score for seeded items
+          : (item.algorithmScore || 0.8) * 0.3
       }))
-      .sort((a, b) => b.algorithmScore - a.algorithmScore), 
-    [user?.preferences?.categories]
-  );
+      .sort((a, b) => (b.algorithmScore || 0) - (a.algorithmScore || 0));
+  }, [user?.preferences?.categories, seededItems]);
   const currentItem = items[appState.currentItemIndex] || null;
 
   const updateState = useCallback((updates) => {
@@ -914,6 +1258,7 @@ const handleVerifyCode = useCallback(async () => {
       email: firebaseUser.email || '', // Phone auth doesn't provide email
       username: `User${firebaseUser.uid.slice(-6)}`, // Generate username from UID
       avatar_url: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=face',
+      bio: '',
       onboardingComplete: false,
       verified: true, // Phone is verified
       created_at: Date.now()
@@ -1022,6 +1367,7 @@ const handleGoogleAuth = useCallback(async () => {
           email: firebaseUser.email,
           username: SecurityUtils.sanitizeInput(firebaseUser.displayName || firebaseUser.email.split('@')[0]),
           avatar_url: firebaseUser.photoURL || 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=face',
+          bio: '',
           onboardingComplete: false,
           verified: firebaseUser.emailVerified,
           created_at: Date.now()
@@ -1073,6 +1419,7 @@ const handleEmailAuth = useCallback(async () => {
         email: sanitizedEmail,
         username: SecurityUtils.sanitizeInput(sanitizedEmail.split('@')[0]),
         avatar_url: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=face',
+        bio: '',
         onboardingComplete: false,
         verified: false,
         created_at: Date.now()
@@ -1082,85 +1429,131 @@ const handleEmailAuth = useCallback(async () => {
     }, 1000);
   }, [appState.email, updateState]);
 
-const handleSwipe = useCallback((direction) => {
-    console.log('🎯 handleSwipe called with direction:', direction);
-    console.log('🎯 currentItem:', currentItem?.title);
-    console.log('🎯 currentItemIndex:', appState.currentItemIndex);
+const handleSaveForLater = useCallback(() => {
+    console.log('💾 Save for Later clicked');
+    console.log('💾 currentItem:', currentItem?.title);
     
     const now = Date.now();
     
     // SECURITY: Enhanced rate limiting
     if (!SecurityUtils.checkRateLimit(appState.lastActionTime, appState.actionCooldown)) {
-      console.log('🚫 Rate limit exceeded for swipe action');
+      console.log('🚫 Rate limit exceeded for save action');
       return;
     }
     
     if (!currentItem) {
-      console.log('🚫 No current item or still dragging');
+      console.log('🚫 No current item');
       return;
     }
     
-    // SECURITY: Validate daily limit
-    if (direction === 'right' && appState.dailySwipeCount >= appState.maxDailySwipes) {
-      console.log('🚫 Daily limit reached');
-      updateState({ showLimitModal: true });
+    // Check if item is already saved
+    const isAlreadySaved = appState.savedItems.some(item => item.id === currentItem.id);
+    if (isAlreadySaved) {
+      console.log('⚠️ Item already saved');
+      alert('This item is already in your saved items!');
       return;
     }
+    
+    // SECURITY: Validate daily save limit
+    if (appState.dailySaveCount >= appState.maxDailySaves) {
+      console.log('🚫 Daily save limit reached');
+      updateState({ showLimitModal: true, limitModalType: 'saves' });
+      return;
+    }
+    
+    // Add to saved items
+    const newSavedItems = [...appState.savedItems, { ...currentItem, savedAt: Date.now() }];
+    const nextIndex = appState.currentItemIndex < items.length - 1 ? appState.currentItemIndex + 1 : 0;
+    
+    updateState({ 
+      savedItems: newSavedItems,
+      dailySaveCount: appState.dailySaveCount + 1,
+      currentItemIndex: nextIndex,
+      lastActionTime: now,
+      canUndo: false
+    });
+    
+    console.log(`✅ Saved ${currentItem.title} for later (${appState.dailySaveCount + 1}/${appState.maxDailySaves} today)`);
+}, [currentItem, appState.savedItems, appState.dailySaveCount, appState.maxDailySaves, appState.lastActionTime, appState.actionCooldown, appState.currentItemIndex, items.length, updateState]);
+
+const showSwipeTutorial = useCallback(() => {
+  updateState({ showSwipeTutorial: true });
+}, [updateState]);
+
+const hideSwipeTutorial = useCallback(() => {
+  updateState({ showSwipeTutorial: false, hasSeenTutorial: true, hasSeenBuyModeTutorial: true });
+  localStorage.setItem('swipecity_tutorial_completed', 'true');
+  localStorage.setItem('swipecity_buy_tutorial_completed', 'true');
+}, [updateState]);
+
+const resetTutorial = useCallback(() => {
+  localStorage.removeItem('swipecity_tutorial_completed');
+  localStorage.removeItem('swipecity_buy_tutorial_completed');
+  updateState({ hasSeenTutorial: false, showSwipeTutorial: false, hasSeenBuyModeTutorial: false });
+  console.log('Tutorial reset - will show on next app load');
+}, [updateState]);
+
+const handleExpressInterest = useCallback((item) => {
+  console.log('🎯 Expressing interest in:', item.title);
+  
+  // Create a new interest entry
+  const newInterest = {
+    id: `interest_${Date.now()}`,
+    itemId: item.id,
+    buyerId: user?.id || 'user123',
+    buyerName: user?.username || 'You',
+    buyerAvatar: user?.avatar_url || 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=face',
+    sellerId: item.seller_id,
+    sellerName: item.seller_name,
+    itemTitle: item.title,
+    itemImage: item.image_url,
+    timestamp: Date.now(),
+    status: 'pending'
+  };
+  
+  // Add interest to buyerInterests array
+  updateState({ 
+    buyerInterests: [...appState.buyerInterests, newInterest],
+    showInterestConfirmation: true,
+    interestedItem: item
+  });
+  
+  console.log(`✅ Interest submitted for ${item.title} - awaiting seller approval`);
+}, [user, appState.buyerInterests, updateState]);
+
+const closeInterestConfirmation = useCallback(() => {
+  updateState({ showInterestConfirmation: false, interestedItem: null });
+}, [updateState]);
+
+const handleSwipe = useCallback((direction) => {
+    console.log('➡️ Swiping:', direction);
+    
+    // Check daily swipe limit before processing swipe
+    if (appState.dailySwipeCount >= appState.maxDailySwipes) {
+      console.log('🚫 Daily swipe limit reached');
+      updateState({ showLimitModal: true, limitModalType: 'swipes' });
+      return;
+    }
+    
+    // Show animation feedback
+    setShowSwipeFeedback(direction === 'right' ? 'like' : 'pass');
+    setTimeout(() => setShowSwipeFeedback(null), 800);
+    
+    // NO MATCH ANIMATION - This is a marketplace, not a dating app!
+    // Buyers express interest, sellers approve later
     
     const nextIndex = appState.currentItemIndex < items.length - 1 ? appState.currentItemIndex + 1 : 0;
-    console.log('🎯 Next index will be:', nextIndex);
-
-    const newSwipeCount = appState.dailySwipeCount + 1;
     
-    if (direction === 'right') {
-      console.log('🎯 Processing RIGHT swipe - Creating buyer interest');
-      
-      // Create buyer interest for this item
-      const newInterest = {
-        id: `interest_${Date.now()}_${user?.id}`,
-        itemId: currentItem.id,
-        buyerId: user?.id,
-        buyerName: user?.username || user?.email?.split('@')[0] || 'Anonymous',
-        buyerAvatar: user?.avatar_url,
-        itemTitle: currentItem.title,
-        itemImage: currentItem.image_url,
-        sellerName: currentItem.seller_name,
-        sellerId: currentItem.seller_id,
-        timestamp: now,
-        status: 'pending' // pending, approved, rejected
-      };
-      
-      // Add to buyer interests
-      updateState({ 
-        buyerInterests: [...(appState.buyerInterests || []), newInterest],
-        currentItemIndex: nextIndex,
-        dailySwipeCount: newSwipeCount,
-        lastActionTime: now,
-        canUndo: false
-      });
-      
-      console.log(`💝 Interest created for ${currentItem.title} by ${newInterest.buyerName}`);
-      
-      // Show feedback to buyer
-      updateState({ 
-        showInterestConfirmation: true,
-        interestedItem: currentItem
-      });
-      
-      // Auto-hide confirmation after 2 seconds
-      setTimeout(() => {
-        updateState({ showInterestConfirmation: false, interestedItem: null });
-      }, 2000);
-    } else {
-      updateState({ 
-        currentItemIndex: nextIndex, 
-        lastActionTime: now,
-        lastPassedItem: currentItem,
-        canUndo: true
-      });
-      console.log(`👍 Passed on ${currentItem.title} - doesn't count against daily limit`);
-    }
-}, [currentItem, appState.currentItemIndex, appState.dailySwipeCount, appState.maxDailySwipes, appState.lastActionTime, appState.actionCooldown, appState.isDragging, items.length, updateState, appState.canUndo, appState.lastPassedItem]);  const handleUndo = useCallback(() => {
+    // Increment daily swipe count for both left and right swipes
+    updateState({ 
+      currentItemIndex: nextIndex,
+      lastPassedItem: direction === 'left' ? currentItem : null,
+      canUndo: direction === 'left',
+      dailySwipeCount: appState.dailySwipeCount + 1
+    });
+    
+    console.log(`✅ Swipe ${direction} recorded (${appState.dailySwipeCount + 1}/${appState.maxDailySwipes} today)`);
+}, [appState.currentItemIndex, appState.dailySwipeCount, appState.maxDailySwipes, items.length, currentItem, updateState]);  const handleUndo = useCallback(() => {
     if (appState.canUndo && appState.lastPassedItem) {
       // Go back to the passed item
       const lastItemIndex = items.findIndex(item => item.id === appState.lastPassedItem.id);
@@ -1200,9 +1593,9 @@ const handleUpdateListing = useCallback(() => {
   
   const updatedListing = {
     ...appState.editingListing,
-    title: SecurityUtils.sanitizeInput(appState.editTitle),
+    title: SecurityUtils.sanitizeInputFinal(appState.editTitle),
     price: parseFloat(appState.editPrice),
-    description: SecurityUtils.sanitizeInput(appState.editDescription),
+    description: SecurityUtils.sanitizeInputFinal(appState.editDescription),
     condition: appState.editCondition,
     images: appState.editImages,
     updated_at: Date.now()
@@ -1254,7 +1647,7 @@ const handleApproveInterest = useCallback((interest) => {
     item.id === interest.id ? { ...item, status: 'approved' } : item
   );
   
-  // Create a new chat between seller and buyer
+  // Create a new chat between seller and buyer (without automatic message)
   const newChat = {
     id: `chat_${interest.id}`,
     buyer_name: interest.buyerName,
@@ -1264,26 +1657,21 @@ const handleApproveInterest = useCallback((interest) => {
     buyer_id: interest.buyerId,
     seller_id: interest.sellerId,
     item_id: interest.itemId,
-    last_message: `${interest.sellerName} approved your interest in ${interest.itemTitle}!`,
+    last_message: 'Chat started',
     timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     unread: false,
-    messages: [
-      {
-        id: `approval_${interest.id}`,
-        sender_id: interest.sellerId,
-        sender_name: interest.sellerName,
-        text: `Hi ${interest.buyerName}! I'd love to sell my ${interest.itemTitle} to you. Let's chat about the details! 😊`,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      }
-    ]
+    messages: []
   };
   
   updateState({ 
     buyerInterests: updatedInterests,
-    chats: [newChat, ...appState.chats.filter(chat => chat.id !== newChat.id)]
+    chats: [newChat, ...appState.chats.filter(chat => chat.id !== newChat.id)],
+    activeChat: newChat,
+    showChats: true,
+    currentView: 'home' // Switch to home view which shows chats
   });
   
-  console.log(`✅ Approved interest from ${interest.buyerName} for ${interest.itemTitle}`);
+  console.log(`✅ Approved interest from ${interest.buyerName} for ${interest.itemTitle} - opening chat`);
 }, [appState.buyerInterests, appState.chats, updateState]);
 
 // Handle seller rejecting buyer interest
@@ -1443,6 +1831,38 @@ const handleDragEnd = useCallback(() => {
     }
   }, [isAuthenticated, appState.showAuthModal, updateState]);
 
+  // Check if user has seen tutorial and show it on first launch
+  useEffect(() => {
+    const hasSeenTutorial = localStorage.getItem('swipecity_tutorial_completed');
+    const hasSeenBuyModeTutorial = localStorage.getItem('swipecity_buy_tutorial_completed');
+    
+    // Only show tutorial if user is authenticated and hasn't seen it before
+    if (isAuthenticated && !hasSeenTutorial && !appState.hasSeenTutorial && !appState.showSwipeTutorial) {
+      console.log('First time user - showing tutorial');
+      updateState({ showSwipeTutorial: true });
+    } else if (hasSeenTutorial && !appState.hasSeenTutorial) {
+      // Mark as seen if it's stored in localStorage
+      updateState({ 
+        hasSeenTutorial: true,
+        hasSeenBuyModeTutorial: hasSeenBuyModeTutorial ? true : false
+      });
+    }
+  }, [isAuthenticated, appState.hasSeenTutorial, appState.showSwipeTutorial, updateState]);
+
+  // Load user preferences when user changes or settings modal opens
+  useEffect(() => {
+    if (user && user.preferences && appState.showSettings) {
+      updateState({
+        searchKeywords: user.preferences.searchKeywords || appState.searchKeywords,
+        minPrice: user.preferences.minPrice || appState.minPrice,
+        maxPrice: user.preferences.maxPrice || appState.maxPrice,
+        searchRadius: user.preferences.searchRadius || appState.searchRadius,
+        conditionPreference: user.preferences.conditionPreference || appState.conditionPreference,
+        wantDealAlerts: user.preferences.wantDealAlerts !== undefined ? user.preferences.wantDealAlerts : appState.wantDealAlerts
+      });
+    }
+  }, [user, appState.showSettings]);
+
 // Enhanced redirect handling for mobile
 useEffect(() => {
   const handleRedirectResult = async () => {
@@ -1473,6 +1893,7 @@ useEffect(() => {
           email: firebaseUser.email,
           username: SecurityUtils.sanitizeInput(firebaseUser.displayName || firebaseUser.email.split('@')[0]),
           avatar_url: firebaseUser.photoURL || 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=face',
+          bio: '',
           onboardingComplete: false,
           verified: firebaseUser.emailVerified,
           created_at: Date.now()
@@ -1645,6 +2066,82 @@ if (!appState.showAddItem) {
     };
   }, [appState.showAddItem]);
 
+  // Admin dashboard trigger (triple-tap logo or Ctrl+Shift+A)
+  useEffect(() => {
+    let tapCount = 0;
+    let tapTimer = null;
+    
+    const handleKeyPress = (e) => {
+      if (e.ctrlKey && e.shiftKey && e.code === 'KeyA') {
+        updateState({ showAdminDashboard: !appState.showAdminDashboard });
+      }
+    };
+    
+    const handleTripleTap = () => {
+      tapCount++;
+      if (tapCount === 1) {
+        tapTimer = setTimeout(() => {
+          tapCount = 0;
+        }, 1000);
+      } else if (tapCount === 3) {
+        clearTimeout(tapTimer);
+        tapCount = 0;
+        updateState({ showAdminDashboard: !appState.showAdminDashboard });
+      }
+    };
+    
+    document.addEventListener('keydown', handleKeyPress);
+    // Add triple-tap listener to any logo element
+    const logoElement = document.querySelector('[data-logo]');
+    if (logoElement) {
+      logoElement.addEventListener('click', handleTripleTap);
+    }
+    
+    return () => {
+      document.removeEventListener('keydown', handleKeyPress);
+      if (logoElement) {
+        logoElement.removeEventListener('click', handleTripleTap);
+      }
+      if (tapTimer) clearTimeout(tapTimer);
+    };
+  }, [appState.showAdminDashboard, updateState]);
+
+  // Load seeded items from DataService with performance monitoring
+  useEffect(() => {
+    const loadSeededItems = async () => {
+      try {
+        setLoadingItems(true);
+        const startTime = performance.now();
+        
+        // Get items from DataService (will return mock items if no seeded data exists)
+        const items = await DataService.getItems({ limit: 300 });
+        
+        const loadTime = performance.now() - startTime;
+        console.log(`📦 Loaded ${items.length} items in ${loadTime.toFixed(2)}ms`);
+        console.log(`⚡ Average: ${(loadTime / items.length).toFixed(2)}ms per item`);
+        
+        // Performance warning if slow
+        if (loadTime > 1000) {
+          console.warn('⚠️ Slow load detected! Consider implementing pagination.');
+        }
+        
+        setSeededItems(items || []);
+      } catch (error) {
+        console.error('Failed to load seeded items:', error);
+        setSeededItems([]); // Fallback to empty array
+      } finally {
+        setLoadingItems(false);
+      }
+    };
+
+    loadSeededItems();
+  }, []);
+
+  // Make test function available globally for debugging
+  useEffect(() => {
+    window.testImageGeneration = testImageGeneration;
+  }, []); // Load once when component mounts
+
   console.log('Render decision:', { 
     showAuthModal: appState.showAuthModal, 
     isAuthenticated, 
@@ -1735,228 +2232,694 @@ if (!appState.showAddItem) {
 
   if (needsOnboarding) {
     console.log('Showing onboarding, step:', appState.onboardingStep);
+    
+    /* BACKUP: Original complex onboarding flow removed for streamlined version
+       - Categories grid selection (removed)
+       - Complex shopping style selection (simplified)
+       - Kept structure for easy reversion if needed
+    */
+    
+    // Step 1: What are you shopping for?
     if (appState.onboardingStep === 1) {
+      // Amazon-inspired categories
+      const shoppingCategories = [
+        { id: 'electronics', label: 'Electronics' },
+        { id: 'clothing', label: 'Clothing' },
+        { id: 'shoes', label: 'Shoes' },
+        { id: 'home', label: 'Home & Garden' },
+        { id: 'sports', label: 'Sports & Outdoors' },
+        { id: 'books', label: 'Books' },
+        { id: 'toys', label: 'Toys & Games' },
+        { id: 'beauty', label: 'Beauty & Health' },
+        { id: 'automotive', label: 'Automotive' },
+        { id: 'jewelry', label: 'Jewelry' },
+        { id: 'baby', label: 'Baby & Kids' },
+        { id: 'tools', label: 'Tools & DIY' },
+        { id: 'music', label: 'Music' },
+        { id: 'art', label: 'Art & Crafts' },
+        { id: 'furniture', label: 'Furniture' },
+        { id: 'vintage', label: 'Vintage' }
+      ];
+
+      const selectedCategories = appState.selectedShoppingCategories || [];
+
       return (
         <div style={{
           minHeight: '100vh',
-          background: 'linear-gradient(135deg, #FF6B35, #FFD23F)',
+          background: 'linear-gradient(135deg, #667eea, #764ba2)',
           color: 'white',
           padding: '20px',
           textAlign: 'center',
+          paddingTop: 'max(30px, env(safe-area-inset-top) + 10px)',
+          paddingBottom: '160px', // Space for OnboardingButtonBar
           display: 'flex',
-          flexDirection: 'column',
-          paddingTop: 'max(50px, env(safe-area-inset-top) + 30px)',
-          paddingBottom: 'max(20px, env(safe-area-inset-bottom))'
+          flexDirection: 'column'
         }}>
-          <div style={{ marginBottom: '30px', minHeight: '80px' }}>
-            <h1 style={{fontSize: '24px', marginBottom: '10px', margin: '0 0 10px 0', fontWeight: '700'}}>What are you interested in?</h1>
-            <p style={{margin: '0', fontSize: '16px', opacity: 0.9}}>Select at least 2 categories</p>
+          {/* Compact Header */}
+          <div style={{ marginBottom: '15px' }}>
+            <div style={{ fontSize: '32px', marginBottom: '8px' }}>🛍️</div>
+            <h1 style={{fontSize: '22px', marginBottom: '8px', margin: '0 0 8px 0', fontWeight: '700'}}>
+              What are you shopping for?
+            </h1>
+            <p style={{fontSize: '14px', opacity: 0.9, maxWidth: '280px', margin: '0 auto'}}>
+              Select categories you're interested in
+            </p>
           </div>
           
+          {/* Selected categories display */}
+          {selectedCategories.length > 0 && (
+            <div style={{
+              marginBottom: '20px',
+              padding: '12px',
+              background: 'rgba(255,255,255,0.1)',
+              borderRadius: '10px',
+              maxWidth: '350px',
+              margin: '0 auto 20px',
+              border: '1px solid rgba(255,255,255,0.2)'
+            }}>
+              <div style={{ fontSize: '14px', marginBottom: '8px', opacity: 0.9, fontWeight: 'bold' }}>
+                Selected ({selectedCategories.length}):
+              </div>
+              <div style={{ fontSize: '11px', opacity: 0.8, lineHeight: '1.4' }}>
+                {selectedCategories.map(cat => {
+                  const category = shoppingCategories.find(c => c.id === cat);
+                  return category ? category.label : '';
+                }).join(', ')}
+              </div>
+            </div>
+          )}
+
+          {/* Category grid - Maximum space for easy selection */}
           <div style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(2, 1fr)',
-            gap: '12px',
-            maxWidth: '320px',
-            margin: '0 auto 30px',
-            minHeight: '300px'
+            gridTemplateColumns: 'repeat(3, 1fr)',
+            gap: '8px',
+            marginBottom: '10px',
+            maxWidth: '350px',
+            margin: '0 auto 10px',
+            maxHeight: '280px',
+            overflowY: 'auto',
+            padding: '5px'
           }}>
-            {categories.map((cat, i) => {
-              const selected = appState.selectedCategories.includes(i);
+            {shoppingCategories.map((category) => {
+              const isSelected = selectedCategories.includes(category.id);
               return (
-                <div
-                  key={i}
-                  onClick={() => toggleCategory(i)}
+                <button
+                  key={category.id}
+                  onClick={() => {
+                    const newCategories = isSelected
+                      ? selectedCategories.filter(c => c !== category.id)
+                      : [...selectedCategories, category.id];
+                    updateState({ selectedShoppingCategories: newCategories });
+                  }}
                   style={{
-                    background: selected ? 'white' : 'rgba(255,255,255,0.3)',
-                    color: selected ? '#333' : 'white',
-                    border: selected ? '3px solid #4CAF50' : '2px solid rgba(255,255,255,0.5)',
-                    borderRadius: '12px',
-                    padding: '15px 10px',
+                    padding: '12px 6px',
+                    borderRadius: '8px',
+                    border: isSelected ? '2px solid #4CAF50' : '2px solid rgba(255,255,255,0.3)',
+                    background: isSelected ? 'rgba(76, 175, 80, 0.3)' : 'rgba(255,255,255,0.1)',
+                    color: 'white',
+                    fontSize: '12px',
                     cursor: 'pointer',
-                    fontSize: '14px',
-                    fontWeight: 'bold',
-                    position: 'relative',
-                    minHeight: '60px',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    textAlign: 'center'
+                    textAlign: 'center',
+                    transition: 'all 0.2s ease',
+                    transform: isSelected ? 'scale(0.95)' : 'scale(1)',
+                    fontWeight: isSelected ? 'bold' : 'normal',
+                    minHeight: '44px',
+                    width: '100%',
+                    boxSizing: 'border-box'
                   }}
                 >
-                  {selected && (
-                    <div style={{
-                      position: 'absolute',
-                      top: '6px',
-                      right: '6px',
-                      background: '#4CAF50',
-                      color: 'white',
-                      borderRadius: '50%',
-                      width: '18px',
-                      height: '18px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: '10px'
-                    }}>
-                      ✓
-                    </div>
+                  {category.label}
+                  {isSelected && (
+                    <span style={{ marginLeft: '5px', color: '#4CAF50' }}>✓</span>
                   )}
-                  {cat}
-                </div>
+                </button>
               );
             })}
           </div>
           
-          <div>
-            <button
-              onClick={() => updateState({ onboardingStep: 2 })}
-              disabled={appState.selectedCategories.length < 2}
-              style={{
-                background: appState.selectedCategories.length >= 2 ? '#4CAF50' : 'rgba(255,255,255,0.3)',
-                color: 'white',
-                border: 'none',
-                borderRadius: '25px',
-                padding: '12px 30px',
-                fontSize: '16px',
-                fontWeight: 'bold',
-                cursor: appState.selectedCategories.length >= 2 ? 'pointer' : 'not-allowed',
-                opacity: appState.selectedCategories.length >= 2 ? 1 : 0.6
-              }}
-            >
-              Continue → ({appState.selectedCategories.length}/2+)
-            </button>
+          
+          <OnboardingButtonBar
+            showBack={false}
+            showSkip={true}
+            onSkip={() => updateState({ selectedShoppingCategories: [], onboardingStep: 2 })}
+            onNext={() => {
+              console.log('Continue clicked, selected categories:', selectedCategories);
+              updateState({ onboardingStep: 2 });
+            }}
+          />
+        </div>
+      );
+    }
+    
+    // Step 2: Budget Range
+    if (appState.onboardingStep === 2) {
+      return (
+        <div style={{
+          minHeight: '100vh',
+          background: 'linear-gradient(135deg, #f093fb, #f5576c)',
+          color: 'white',
+          padding: '20px',
+          textAlign: 'center',
+          paddingTop: 'max(30px, env(safe-area-inset-top) + 10px)',
+          paddingBottom: '140px' // Space for lower OnboardingButtonBar
+        }}>
+          <div style={{ marginBottom: '40px' }}>
+            <div style={{ fontSize: '48px', marginBottom: '20px' }}>💰</div>
+            <h1 style={{fontSize: '28px', marginBottom: '15px', margin: '0 0 15px 0', fontWeight: '700'}}>
+              What's your budget?
+            </h1>
+            <p style={{margin: '0', fontSize: '16px', opacity: 0.9}}>
+              Set your spending range to see items that fit your budget
+            </p>
           </div>
+          
+          <div style={{ 
+            background: 'rgba(255,255,255,0.15)', 
+            borderRadius: '20px', 
+            padding: '30px', 
+            maxWidth: '400px', 
+            margin: '0 auto 40px' 
+          }}>
+            <div style={{ marginBottom: '30px' }}>
+              <div style={{ fontSize: '24px', fontWeight: 'bold', marginBottom: '10px' }}>
+                ${appState.minPrice} - ${appState.maxPrice}
+              </div>
+              
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ display: 'block', marginBottom: '10px', fontSize: '14px' }}>
+                  Minimum Price
+                </label>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                  <button
+                    onClick={() => {
+                      const newValue = Math.max(5, appState.minPrice - 10);
+                      updateState({ 
+                        minPrice: newValue,
+                        maxPrice: Math.max(newValue + 10, appState.maxPrice)
+                      });
+                    }}
+                    style={{
+                      background: 'rgba(255,255,255,0.2)',
+                      color: 'white',
+                      border: '1px solid rgba(255,255,255,0.5)',
+                      borderRadius: '50%',
+                      width: '30px',
+                      height: '30px',
+                      cursor: 'pointer',
+                      fontSize: '18px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}
+                  >
+                    -
+                  </button>
+                  <div
+                    onClick={() => {
+                      const input = prompt('Enter minimum price:', appState.minPrice);
+                      if (input !== null) {
+                        const value = parseInt(input) || 5;
+                        const validValue = Math.min(Math.max(5, value), appState.maxPrice - 10);
+                        updateState({ 
+                          minPrice: validValue,
+                          maxPrice: Math.max(validValue + 10, appState.maxPrice)
+                        });
+                      }
+                    }}
+                    style={{
+                      cursor: 'pointer',
+                      fontSize: '16px',
+                      fontWeight: 'bold',
+                      padding: '8px 15px',
+                      background: 'rgba(255,255,255,0.1)',
+                      borderRadius: '8px',
+                      textAlign: 'center'
+                    }}
+                  >
+                    ${appState.minPrice}
+                  </div>
+                  <button
+                    onClick={() => {
+                      const newValue = Math.min(appState.maxPrice - 10, appState.minPrice + 10);
+                      updateState({ 
+                        minPrice: newValue,
+                        maxPrice: Math.max(newValue + 10, appState.maxPrice)
+                      });
+                    }}
+                    style={{
+                      background: 'rgba(255,255,255,0.2)',
+                      color: 'white',
+                      border: '1px solid rgba(255,255,255,0.5)',
+                      borderRadius: '50%',
+                      width: '30px',
+                      height: '30px',
+                      cursor: 'pointer',
+                      fontSize: '18px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}
+                  >
+                    +
+                  </button>
+                </div>
+                <input
+                  type="range"
+                  min="5"
+                  max="1000"
+                  value={appState.minPrice}
+                  onChange={(e) => {
+                    const newMin = parseInt(e.target.value);
+                    updateState({ 
+                      minPrice: newMin,
+                      maxPrice: Math.max(newMin + 10, appState.maxPrice)
+                    });
+                  }}
+                  style={{
+                    width: '100%',
+                    height: '20px',
+                    borderRadius: '10px',
+                    background: 'rgba(255,255,255,0.3)',
+                    outline: 'none',
+                    cursor: 'pointer',
+                    WebkitAppearance: 'none',
+                    MozAppearance: 'none',
+                    appearance: 'none'
+                  }}
+                />
+              </div>
+              
+              <div>
+                <label style={{ display: 'block', marginBottom: '10px', fontSize: '14px' }}>
+                  Maximum Price
+                </label>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                  <button
+                    onClick={() => {
+                      const newValue = Math.max(appState.minPrice + 10, appState.maxPrice - 10);
+                      updateState({ 
+                        maxPrice: newValue,
+                        minPrice: Math.min(appState.minPrice, newValue - 10)
+                      });
+                    }}
+                    style={{
+                      background: 'rgba(255,255,255,0.2)',
+                      color: 'white',
+                      border: '1px solid rgba(255,255,255,0.5)',
+                      borderRadius: '50%',
+                      width: '30px',
+                      height: '30px',
+                      cursor: 'pointer',
+                      fontSize: '18px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}
+                  >
+                    -
+                  </button>
+                  <div
+                    onClick={() => {
+                      const input = prompt('Enter maximum price:', appState.maxPrice);
+                      if (input !== null) {
+                        const value = parseInt(input) || 100;
+                        const validValue = Math.max(appState.minPrice + 10, value);
+                        updateState({ 
+                          maxPrice: validValue,
+                          minPrice: Math.min(appState.minPrice, validValue - 10)
+                        });
+                      }
+                    }}
+                    style={{
+                      cursor: 'pointer',
+                      fontSize: '16px',
+                      fontWeight: 'bold',
+                      padding: '8px 15px',
+                      background: 'rgba(255,255,255,0.1)',
+                      borderRadius: '8px',
+                      textAlign: 'center'
+                    }}
+                  >
+                    ${appState.maxPrice}
+                  </div>
+                  <button
+                    onClick={() => {
+                      const newValue = Math.min(2000, appState.maxPrice + 10);
+                      updateState({ 
+                        maxPrice: newValue,
+                        minPrice: Math.min(appState.minPrice, newValue - 10)
+                      });
+                    }}
+                    style={{
+                      background: 'rgba(255,255,255,0.2)',
+                      color: 'white',
+                      border: '1px solid rgba(255,255,255,0.5)',
+                      borderRadius: '50%',
+                      width: '30px',
+                      height: '30px',
+                      cursor: 'pointer',
+                      fontSize: '18px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}
+                  >
+                    +
+                  </button>
+                </div>
+                <input
+                  type="range"
+                  min="10"
+                  max="2000"
+                  value={appState.maxPrice}
+                  onChange={(e) => {
+                    const newMax = parseInt(e.target.value);
+                    updateState({ 
+                      maxPrice: newMax,
+                      minPrice: Math.min(appState.minPrice, newMax - 10)
+                    });
+                  }}
+                  style={{
+                    width: '100%',
+                    height: '20px',
+                    borderRadius: '10px',
+                    background: 'rgba(255,255,255,0.3)',
+                    outline: 'none',
+                    cursor: 'pointer',
+                    WebkitAppearance: 'none',
+                    MozAppearance: 'none',
+                    appearance: 'none'
+                  }}
+                />
+              </div>
+            </div>
+            
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap' }}>
+              {[
+                { min: 10, max: 50, label: 'Under $50' },
+                { min: 25, max: 200, label: '$25-200' },
+                { min: 100, max: 500, label: '$100-500' },
+                { min: 200, max: 1000, label: '$200+' }
+              ].map((preset) => (
+                <button
+                  key={preset.label}
+                  onClick={() => updateState({ minPrice: preset.min, maxPrice: preset.max })}
+                  style={{
+                    background: 'rgba(255,255,255,0.3)',
+                    color: 'white',
+                    border: '1px solid rgba(255,255,255,0.5)',
+                    borderRadius: '15px',
+                    padding: '8px 12px',
+                    fontSize: '12px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          
+          <OnboardingButtonBar
+            onBack={() => updateState({ onboardingStep: 1 })}
+            onNext={() => updateState({ onboardingStep: 3 })}
+          />
+        </div>
+      );
+    }
+    
+    // Step 3: Distance Range
+    if (appState.onboardingStep === 3) {
+      const driveTime = appState.searchRadius <= 5 ? '10-15 min' : 
+                       appState.searchRadius <= 15 ? '15-30 min' : 
+                       appState.searchRadius <= 30 ? '30-45 min' : '45+ min';
+      
+      return (
+        <div style={{
+          minHeight: '100vh',
+          background: 'linear-gradient(135deg, #4facfe, #00f2fe)',
+          color: 'white',
+          padding: '15px',
+          textAlign: 'center',
+          paddingTop: /android/i.test(navigator.userAgent) || window.Capacitor?.getPlatform?.() === 'android'
+            ? 'max(50px, env(safe-area-inset-top) + 25px)' // More top padding on Android for camera notch
+            : 'max(20px, env(safe-area-inset-top) + 5px)', // Original iOS padding
+          paddingBottom: '140px' // Space for lower OnboardingButtonBar
+        }}>
+          <div style={{ marginBottom: '15px' }}>
+            <div style={{ fontSize: '36px', marginBottom: '10px' }}>📍</div>
+            <h1 style={{fontSize: '24px', marginBottom: '8px', margin: '0 0 8px 0', fontWeight: '700'}}>
+              How far will you travel?
+            </h1>
+            <p style={{margin: '0', fontSize: '14px', opacity: 0.9}}>
+              We'll show you items within your travel range
+            </p>
+          </div>
+          
+          <div style={{ 
+            background: 'rgba(255,255,255,0.15)', 
+            borderRadius: '20px', 
+            padding: '15px', 
+            maxWidth: '380px', 
+            margin: '0 auto 15px' 
+          }}>
+            <div style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '8px' }}>
+              Distance Range
+            </div>
+            
+            {/* Increment controls for distance */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+              <button
+                onClick={() => {
+                  const newValue = Math.max(1, appState.searchRadius - 10);
+                  updateState({ searchRadius: newValue });
+                }}
+                style={{
+                  background: 'rgba(255,255,255,0.2)',
+                  color: 'white',
+                  border: '1px solid rgba(255,255,255,0.5)',
+                  borderRadius: '50%',
+                  width: '30px',
+                  height: '30px',
+                  cursor: 'pointer',
+                  fontSize: '18px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}
+              >
+                -
+              </button>
+              <div
+                onClick={() => {
+                  const input = prompt('Enter distance in miles:', appState.searchRadius);
+                  if (input !== null) {
+                    const value = parseInt(input) || 15;
+                    const validValue = Math.min(Math.max(1, value), 100);
+                    updateState({ searchRadius: validValue });
+                  }
+                }}
+                style={{
+                  cursor: 'pointer',
+                  fontSize: '16px',
+                  fontWeight: 'bold',
+                  padding: '8px 15px',
+                  background: 'rgba(255,255,255,0.1)',
+                  borderRadius: '8px',
+                  textAlign: 'center'
+                }}
+              >
+                {appState.searchRadius} miles
+              </div>
+              <button
+                onClick={() => {
+                  const newValue = Math.min(100, appState.searchRadius + 10);
+                  updateState({ searchRadius: newValue });
+                }}
+                style={{
+                  background: 'rgba(255,255,255,0.2)',
+                  color: 'white',
+                  border: '1px solid rgba(255,255,255,0.5)',
+                  borderRadius: '50%',
+                  width: '30px',
+                  height: '30px',
+                  cursor: 'pointer',
+                  fontSize: '18px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}
+              >
+                +
+              </button>
+            </div>
+            
+            <div style={{ fontSize: '12px', opacity: 0.7, marginBottom: '15px' }}>
+              ~{driveTime} drive time
+            </div>
+            
+            <input
+              type="range"
+              min="1"
+              max="50"
+              value={appState.searchRadius}
+              onChange={(e) => updateState({ searchRadius: parseInt(e.target.value) })}
+              style={{
+                width: '100%',
+                height: '20px',
+                borderRadius: '10px',
+                background: 'rgba(255,255,255,0.3)',
+                outline: 'none',
+                marginBottom: '15px',
+                cursor: 'pointer',
+                WebkitAppearance: 'none',
+                MozAppearance: 'none',
+                appearance: 'none'
+              }}
+            />
+            
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
+              {[5, 15, 25, 40].map((distance) => (
+                <button
+                  key={distance}
+                  onClick={() => updateState({ searchRadius: distance })}
+                  style={{
+                    background: appState.searchRadius === distance ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.3)',
+                    color: appState.searchRadius === distance ? '#333' : 'white',
+                    border: '1px solid rgba(255,255,255,0.5)',
+                    borderRadius: '15px',
+                    padding: '8px 12px',
+                    fontSize: '12px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  {distance}mi
+                </button>
+              ))}
+            </div>
+          </div>
+          
+          <OnboardingButtonBar
+            onBack={() => updateState({ onboardingStep: 2 })}
+            onNext={() => updateState({ onboardingStep: 4 })}
+          />
+        </div>
+      );
+    }
+    
+    // Step 4: Final preferences
+    if (appState.onboardingStep === 4) {
+      return (
+        <div style={{
+          minHeight: '100vh',
+          background: 'linear-gradient(135deg, #a8edea, #fed6e3)',
+          color: '#333',
+          padding: '20px',
+          textAlign: 'center',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          paddingTop: 'max(30px, env(safe-area-inset-top) + 10px)',
+          paddingBottom: '140px' // Space for lower OnboardingButtonBar
+        }}>
+          <div style={{ marginBottom: '30px' }}>
+            <div style={{ fontSize: '48px', marginBottom: '15px' }}>✨</div>
+            <h1 style={{fontSize: '28px', marginBottom: '10px', margin: '0 0 10px 0', fontWeight: '700'}}>
+              Final touches
+            </h1>
+            <p style={{margin: '0', fontSize: '16px', opacity: 0.8}}>
+              A couple quick preferences to personalize your experience
+            </p>
+          </div>
+          
+          <div style={{ 
+            background: 'rgba(255,255,255,0.8)', 
+            borderRadius: '20px', 
+            padding: '25px', 
+            maxWidth: '400px', 
+            margin: '0 auto 30px',
+            textAlign: 'left'
+          }}>
+            <div style={{ marginBottom: '25px' }}>
+              <h3 style={{ margin: '0 0 15px 0', fontSize: '16px' }}>Item condition preference</h3>
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                {[
+                  { value: 'new', label: 'New only' },
+                  { value: 'like-new', label: 'Like new' },
+                  { value: 'good', label: 'Good condition' },
+                  { value: 'any', label: 'Any condition' }
+                ].map((condition) => (
+                  <button
+                    key={condition.value}
+                    onClick={() => updateState({ conditionPreference: condition.value })}
+                    style={{
+                      background: appState.conditionPreference === condition.value ? '#667eea' : '#f5f5f5',
+                      color: appState.conditionPreference === condition.value ? 'white' : '#333',
+                      border: '1px solid #ddd',
+                      borderRadius: '15px',
+                      padding: '8px 12px',
+                      fontSize: '12px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {condition.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            
+            <div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={appState.wantDealAlerts}
+                  onChange={(e) => updateState({ wantDealAlerts: e.target.checked })}
+                  style={{ transform: 'scale(1.2)' }}
+                />
+                <span style={{ fontSize: '14px' }}>
+                  📱 Notify me about great deals matching my interests
+                </span>
+              </label>
+            </div>
+          </div>
+          
+          <OnboardingButtonBar
+            onBack={() => updateState({ onboardingStep: 3 })}
+            onNext={() => {
+              // Complete onboarding with new preferences
+              const updatedUser = {
+                ...user,
+                onboardingComplete: true,
+                preferences: {
+                  searchKeywords: appState.searchKeywords,
+                  minPrice: appState.minPrice,
+                  maxPrice: appState.maxPrice,
+                  searchRadius: appState.searchRadius,
+                  conditionPreference: appState.conditionPreference,
+                  wantDealAlerts: appState.wantDealAlerts
+                }
+              };
+              setGlobalUser(updatedUser);
+              console.log('✅ New onboarding completed with preferences:', updatedUser.preferences);
+            }}
+            nextText="Start Shopping! 🎉"
+          />
         </div>
       );
     }
 
-    return (
-      <div style={{
-        minHeight: '100vh',
-        background: 'linear-gradient(135deg, #9C27B0, #FF5722)',
-        color: 'white',
-        padding: '20px',
-        textAlign: 'center',
-        display: 'flex',
-        flexDirection: 'column',
-        paddingTop: 'max(90px, env(safe-area-inset-top) + 70px)',
-        paddingBottom: 'max(20px, env(safe-area-inset-bottom))'
-      }}>
-        <h2 style={{fontSize: '22px', marginBottom: '25px', margin: '0 0 25px 0'}}>Your Shopping Style 🛍️</h2>
-        
-        <div style={{
-          background: 'rgba(255,255,255,0.2)',
-          borderRadius: '15px',
-          padding: '20px',
-          marginBottom: '20px',
-          maxWidth: '320px',
-          margin: '0 auto 20px'
-        }}>
-          <h3 style={{marginBottom: '15px', fontSize: '18px'}}>Price Range</h3>
-          <div style={{display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap'}}>
-            {['$10-50', '$50-100', '$100-200', '$200+'].map((priceOption, i) => (
-              <button
-                key={priceOption}
-                onClick={() => updateState({ priceRange: i })}
-                style={{
-                  background: appState.priceRange === i ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.3)',
-                  color: appState.priceRange === i ? '#333' : 'white',
-                  border: appState.priceRange === i ? '2px solid #4CAF50' : '1px solid rgba(255,255,255,0.5)',
-                  borderRadius: '12px',
-                  padding: '8px 12px',
-                  cursor: 'pointer',
-                  fontWeight: 'bold',
-                  fontSize: '12px'
-                }}
-              >
-                {priceOption}
-              </button>
-            ))}
-          </div>
-        </div>
+    // BACKUP: Old onboarding step 2 removed - can be restored if needed
+    return null;
+  }
 
-        <div style={{marginBottom: '25px'}}>
-          <h3 style={{marginBottom: '15px', fontSize: '18px'}}>Shopping Style</h3>
-          {['🎯 Hunt specific items', '🔍 Browse & discover', '💰 Find deals'].map((styleOption, i) => (
-            <div
-              key={styleOption}
-              onClick={() => updateState({ shoppingStyle: i })}
-              style={{
-                background: appState.shoppingStyle === i ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.3)',
-                color: appState.shoppingStyle === i ? '#333' : 'white',
-                border: appState.shoppingStyle === i ? '3px solid #4CAF50' : '2px solid rgba(255,255,255,0.5)',
-                borderRadius: '12px',
-                padding: '12px',
-                margin: '6px auto',
-                cursor: 'pointer',
-                position: 'relative',
-                fontWeight: 'bold',
-                maxWidth: '280px',
-                fontSize: '14px'
-              }}
-            >
-              {appState.shoppingStyle === i && (
-                <div style={{
-                  position: 'absolute',
-                  top: '8px',
-                  right: '12px',
-                  background: '#4CAF50',
-                  color: 'white',
-                  borderRadius: '50%',
-                  width: '18px',
-                  height: '18px',
-                  textAlign: 'center',
-                  lineHeight: '18px',
-                  fontSize: '10px'
-                }}>
-                  ✓
-                </div>
-              )}
-              {styleOption}
-            </div>
-          ))}
-        </div>
 
-        <div style={{display: 'flex', gap: '12px', justifyContent: 'center'}}>
-          <button
-            onClick={() => updateState({ onboardingStep: 1 })}
-            style={{
-              background: 'rgba(255,255,255,0.3)',
-              color: 'white',
-              border: '1px solid rgba(255,255,255,0.5)',
-              borderRadius: '25px',
-              padding: '12px 20px',
-              cursor: 'pointer',
-              fontSize: '14px'
-            }}
-          >
-            ← Back
-          </button>
-          <button
-            onClick={async () => {
-              console.log('🎯 Start Swiping button clicked!');
-              console.log('Current shopping style:', appState.shoppingStyle);
-              await completeOnboarding();
-            }}
-            disabled={appState.shoppingStyle === ''}
-            style={{
-              background: appState.shoppingStyle !== '' ? '#4CAF50' : 'rgba(255,255,255,0.3)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '25px',
-              padding: '12px 25px',
-              fontWeight: 'bold',
-              cursor: appState.shoppingStyle !== '' ? 'pointer' : 'not-allowed',
-              opacity: appState.shoppingStyle !== '' ? 1 : 0.6,
-              fontSize: '14px'
-            }}
-          >
-            Start Swiping! 🎉
-          </button>
-        </div>
-      </div>
-    );
+  // Show admin dashboard if enabled
+  if (appState.showAdminDashboard) {
+    return <AdminDashboard onClose={() => updateState({ showAdminDashboard: false })} />;
   }
 
   // Main Interface
@@ -1971,7 +2934,9 @@ if (!appState.showAddItem) {
         position: 'relative',
         overflow: 'hidden',
         paddingTop: 'env(safe-area-inset-top)',
-        paddingBottom: '75px' // Reduced space for smaller bottom nav
+        paddingBottom: /android/i.test(navigator.userAgent) || window.Capacitor?.getPlatform?.() === 'android' 
+          ? '120px' // More space for Android (nav bar + bottom nav)
+          : '75px' // iOS space
       }}>
 
         {/* Swipe Cards */}
@@ -1981,7 +2946,9 @@ if (!appState.showAddItem) {
           flexDirection: 'column',
           alignItems: 'center',
           justifyContent: 'flex-start',
-          padding: '20px 20px 0 20px',
+          padding: /android/i.test(navigator.userAgent) || window.Capacitor?.getPlatform?.() === 'android'
+            ? '60px 20px 0 20px' // More top padding on Android to move card down
+            : '20px 20px 0 20px', // Original iOS padding
           position: 'relative',
           minHeight: 0
         }}>
@@ -2042,7 +3009,7 @@ if (!appState.showAddItem) {
                     padding: '10px 20px',
                     borderRadius: '25px',
                     fontWeight: 'bold',
-                    transform: `scale(${Math.abs(appState.dragOffset.x) > 30 && appState.dragOffset.x < 0 ? 1 : 0}) rotate(-15deg)`,
+                    transform: `scale(${Math.abs(appState.dragOffset.x) > 15 && appState.dragOffset.x < 0 ? 1 : 0}) rotate(-15deg)`,
                     transition: 'transform 0.2s ease'
                   }}>
                     PASS
@@ -2056,11 +3023,56 @@ if (!appState.showAddItem) {
                     padding: '10px 20px',
                     borderRadius: '25px',
                     fontWeight: 'bold',
-                    transform: `scale(${Math.abs(appState.dragOffset.x) > 30 && appState.dragOffset.x > 0 ? 1 : 0}) rotate(15deg)`,
+                    transform: `scale(${Math.abs(appState.dragOffset.x) > 15 && appState.dragOffset.x > 0 ? 1 : 0}) rotate(15deg)`,
                     transition: 'transform 0.2s ease'
                   }}>
                     LIKE
                   </div>
+                  
+                  {/* Report Button */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      
+                      // Anti-spam protection - 3 reports per day
+                      if (appState.userReportCount >= 3) {
+                        alert('You have reached the daily report limit (3 reports). Please try again tomorrow.');
+                        return;
+                      }
+                      
+                      if (appState.reportedItems.has(currentItem.id)) {
+                        alert('You have already reported this item.');
+                        return;
+                      }
+                      
+                      // Open report modal
+                      updateState({
+                        showReportModal: true,
+                        reportingItem: currentItem,
+                        selectedReportReason: ''
+                      });
+                    }}
+                    style={{
+                      position: 'absolute',
+                      bottom: '15px',
+                      right: '15px',
+                      background: 'rgba(255, 152, 0, 0.9)',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '50%',
+                      width: '40px',
+                      height: '40px',
+                      fontSize: '18px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+                      zIndex: 10
+                    }}
+                  >
+                    ⚠️
+                  </button>
                 </div>
 
                 <div style={{ padding: '20px' }}>
@@ -2068,6 +3080,42 @@ if (!appState.showAddItem) {
                     <div>
                       <h3 style={{ margin: 0, fontSize: '22px', fontWeight: '700', color: '#333' }}>{currentItem.title}</h3>
                       <p style={{ margin: '5px 0', fontSize: '24px', fontWeight: '800', color: '#4CAF50' }}>${currentItem.price}</p>
+                      <p style={{ margin: '5px 0', fontSize: '14px', color: '#666' }}>
+                        Sold by <span 
+                          onClick={() => {
+                            // Find the seller from our seeded users
+                            const sellerBio = (() => {
+                              // Check if we have the seller in our mock users
+                              const mockSeller = appState.users[currentItem.seller_id];
+                              if (mockSeller && mockSeller.bio) {
+                                return mockSeller.bio;
+                              }
+                              
+                              // Default bios based on seller username patterns
+                              const sellerBios = {
+                                'MikeTheCollector': 'Long-time collector of vintage items and tech gadgets. Always looking for unique finds!',
+                                'SarahStylesLiving': 'Interior designer selling carefully curated home pieces. All items from smoke-free, pet-free home.',
+                                'TechEnthusiast92': 'Software engineer who loves trying new tech. Always upgrading, so selling previous generation items.',
+                                'OutdoorAdventurer': 'Hiking and camping gear enthusiast. Selling quality outdoor equipment that\'s been well cared for.',
+                                'MinimalistMom': 'Decluttering family home. Selling kids items, household goods, and more. Everything clean and well-maintained.',
+                                'VintageVinylVibe': 'Record collector for 20+ years. Selling duplicates and items that need new homes. All records tested.',
+                                'CollegeGradSale': 'Recent graduate selling furniture and electronics before moving. Everything priced to sell quickly!',
+                                'FashionistaFinds': 'Fashion lover with too many clothes! Selling designer and contemporary pieces in excellent condition.'
+                              };
+                              
+                              return sellerBios[currentItem.seller_name] || `${currentItem.seller_name} is a trusted seller on SwipeCity with ${currentItem.seller_reviews} reviews and a ${currentItem.seller_rating} star rating.`;
+                            })();
+                            
+                            alert(`📝 Seller Profile\n\n👤 ${currentItem.seller_name}\n⭐ ${currentItem.seller_rating} rating (${currentItem.seller_reviews} reviews)\n📍 ${currentItem.distance}\n${currentItem.verified ? '✅ Verified Seller' : '⚠️ Unverified'}\n\n${sellerBio}`);
+                          }}
+                          style={{ 
+                            fontWeight: '600', 
+                            color: '#4F46E5',
+                            cursor: 'pointer',
+                            textDecoration: 'underline'
+                          }}
+                        >{currentItem.seller_name}</span>
+                      </p>
                     </div>
                     <div style={{ textAlign: 'right' }}>
                       <div style={{
@@ -2235,111 +3283,117 @@ if (!appState.showAddItem) {
           )}
         </div>
 
-{/* Action Buttons - Maximum clearance from browser UI */}
+{/* Action Buttons - Bottom layout */}
 <div style={{
   position: 'fixed',
-  bottom: '75px',
-  left: '50%',
-  transform: 'translateX(-50%)',
+  bottom: /android/i.test(navigator.userAgent) || window.Capacitor?.getPlatform?.() === 'android'
+    ? '130px' // Higher on Android to clear system nav + bottom nav
+    : '85px', // Original iOS position
+  left: 0,
+  right: 0,
   display: 'flex',
-  justifyContent: 'center',
   alignItems: 'center',
-  gap: appState.canUndo ? '25px' : '45px',
-  zIndex: 1000,
-  width: '100%',
-  maxWidth: '350px'
+  justifyContent: 'space-between',
+  padding: '0 20px',
+  zIndex: 1000
 }}>
-  {appState.canUndo && (
+  {/* Left - Undo button (only shows after passing) */}
+  <div style={{ width: '60px', display: 'flex', justifyContent: 'flex-start' }}>
+    {appState.canUndo && (
+      <button
+        onClick={handleUndo}
+        style={{
+          width: '40px',
+          height: '40px',
+          borderRadius: '50%',
+          border: '2px solid rgba(255,255,255,0.8)',
+          background: 'rgba(255, 152, 0, 0.9)',
+          color: 'white',
+          cursor: 'pointer',
+          fontSize: '18px',
+          fontWeight: 'bold',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          WebkitTapHighlightColor: 'transparent',
+          touchAction: 'manipulation',
+          userSelect: 'none',
+          boxShadow: '0 4px 12px rgba(255, 152, 0, 0.4)'
+        }}
+      >
+        ↶
+      </button>
+    )}
+  </div>
+  
+  {/* Center - Save for Later button */}
+  <button
+    onClick={handleSaveForLater}
+    disabled={!currentItem || appState.isDragging}
+    style={{
+      width: '180px',
+      height: '45px',
+      borderRadius: '25px',
+      border: '3px solid white',
+      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+      color: 'white',
+      cursor: 'pointer',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: '8px',
+      boxShadow: '0 6px 20px rgba(102, 126, 234, 0.5)',
+      opacity: (!currentItem || appState.isDragging) ? 0.5 : 1,
+      fontSize: '14px',
+      fontWeight: 'bold',
+      WebkitTapHighlightColor: 'transparent',
+      touchAction: 'manipulation',
+      userSelect: 'none'
+    }}
+  >
+    <span>💾 Save</span>
+    <span style={{
+      background: 'rgba(255,255,255,0.2)',
+      borderRadius: '12px',
+      padding: '2px 6px',
+      fontSize: '11px',
+      fontWeight: '600'
+    }}>
+      {appState.dailySaveCount}/{appState.maxDailySaves}
+    </span>
+  </button>
+  
+  {/* Right - View Saved button */}
+  <div style={{ width: '60px', display: 'flex', justifyContent: 'flex-end' }}>
     <button
-      onClick={handleUndo}
+      onClick={() => updateState({ showSavedItems: true })}
       style={{
-        width: '55px',         // Slightly larger for mobile
-        height: '55px',        // Slightly larger for mobile
-        borderRadius: '50%',
-        border: '3px solid white',
-        background: '#ff9800',
+        width: '50px',
+        height: '40px',
+        borderRadius: '20px',
+        border: '2px solid rgba(255,255,255,0.8)',
+        background: 'rgba(102, 126, 234, 0.9)',
         color: 'white',
         cursor: 'pointer',
+        fontSize: '11px',
+        fontWeight: '600',
         display: 'flex',
+        flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        boxShadow: '0 6px 20px rgba(255, 152, 0, 0.5)', // Enhanced shadow
-        fontSize: '24px',      // Larger font for mobile
-        fontWeight: 'bold',
+        gap: '2px',
         WebkitTapHighlightColor: 'transparent',
-        // Mobile-specific touch improvements
         touchAction: 'manipulation',
-        userSelect: 'none'
+        userSelect: 'none',
+        boxShadow: '0 4px 12px rgba(102, 126, 234, 0.4)'
       }}
     >
-      ↶
+      <span style={{ fontSize: '12px' }}>🔍</span>
+      <span style={{ fontSize: '9px' }}>({appState.savedItems.length})</span>
     </button>
-  )}
-
-  <button
-    onClick={() => {
-      console.log('❌ PASS button clicked on mobile');
-      handleSwipe('left');
-    }}
-    disabled={!currentItem || appState.isDragging}
-    style={{
-      width: '70px',
-      height: '70px',
-      borderRadius: '50%',
-      border: '4px solid white',
-      background: '#ff4444',
-      color: 'white',
-      cursor: 'pointer',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      boxShadow: '0 8px 25px rgba(255, 68, 68, 0.6)',
-      opacity: (!currentItem || appState.isDragging) ? 0.5 : 1,
-      transform: 'scale(1)',
-      transition: 'all 0.2s ease',
-      fontSize: '28px',
-      fontWeight: 'bold',
-      WebkitTapHighlightColor: 'transparent',
-      // Mobile-specific touch improvements
-      touchAction: 'manipulation',
-      userSelect: 'none'
-    }}
-  >
-    ✕
-  </button>
-
-  <button
-    onClick={() => {
-      console.log('❤️ LIKE button clicked on mobile');
-      handleSwipe('right');
-    }}
-    disabled={!currentItem || appState.isDragging}
-    style={{
-      width: '70px',
-      height: '70px',
-      borderRadius: '50%',
-      border: '4px solid white',
-      background: '#4CAF50',
-      color: 'white',
-      cursor: 'pointer',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      boxShadow: '0 8px 25px rgba(76, 175, 80, 0.6)',
-      opacity: (!currentItem || appState.isDragging) ? 0.5 : 1,
-      transform: 'scale(1)',
-      transition: 'all 0.2s ease',
-      fontSize: '28px',
-      fontWeight: 'bold',
-      WebkitTapHighlightColor: 'transparent',
-      // Mobile-specific touch improvements
-      touchAction: 'manipulation',
-      userSelect: 'none'
-    }}
-  >
-    ❤️
-  </button>
+  </div>
 </div>
+
 
         {/* Match Animation Modal */}
         {appState.showMatchAnimation && appState.matchedItem && (
@@ -2523,9 +3577,26 @@ if (!appState.showAddItem) {
                 </div>
               </div>
 
-              <p style={{ color: '#666', margin: 0, fontSize: '14px' }}>
+              <p style={{ color: '#666', margin: '0 0 20px 0', fontSize: '14px' }}>
                 The seller will review your interest and decide if they want to sell to you!
               </p>
+              
+              <button
+                onClick={closeInterestConfirmation}
+                style={{
+                  background: '#667eea',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '12px',
+                  padding: '12px 24px',
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  width: '100%'
+                }}
+              >
+                Got it!
+              </button>
             </div>
           </div>
         )}
@@ -2570,7 +3641,9 @@ if (!appState.showAddItem) {
             }}>
             <div style={{
               padding: '15px 20px',
-              paddingTop: 'max(15px, env(safe-area-inset-top))',
+              paddingTop: /android/i.test(navigator.userAgent) || window.Capacitor?.getPlatform?.() === 'android'
+                ? 'max(60px, env(safe-area-inset-top) + 45px)' // Much more padding on Android to clear admin button
+                : 'max(15px, env(safe-area-inset-top))', // Original iOS padding
               background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
               color: 'white',
               display: 'flex',
@@ -2616,12 +3689,18 @@ if (!appState.showAddItem) {
                   ←
                 </button>
                 <div>
-                  <h3 style={{ margin: 0, fontSize: '18px' }}>{appState.activeChat.seller_name}</h3>
+                  <h3 style={{ margin: 0, fontSize: '18px' }}>
+                    {appState.currentMode === 'seller' 
+                      ? appState.activeChat.buyer_name 
+                      : appState.activeChat.seller_name}
+                  </h3>
                   <p style={{ margin: 0, fontSize: '14px', opacity: 0.8 }}>{appState.activeChat.item_title}</p>
                 </div>
               </div>
               <button
-                onClick={() => {
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
                   console.log('Close chat button clicked');
                   updateState({ showChats: false, activeChat: null });
                 }}
@@ -2630,6 +3709,10 @@ if (!appState.showAddItem) {
                   e.stopPropagation();
                   console.log('Close chat button touched');
                   updateState({ showChats: false, activeChat: null });
+                }}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
                 }}
                 style={{
                   background: 'rgba(255,255,255,0.2)',
@@ -2691,6 +3774,7 @@ if (!appState.showAddItem) {
 
             <div style={{
               padding: '15px 20px',
+              paddingBottom: 'max(15px, env(safe-area-inset-bottom))',
               background: 'white',
               borderTop: '1px solid #eee',
               display: 'flex',
@@ -2712,21 +3796,20 @@ if (!appState.showAddItem) {
                       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                     };
                     
-                    setAppState(prev => ({
-                      ...prev,
+                    updateState({
                       newMessage: '',
                       activeChat: {
-                        ...prev.activeChat,
-                        messages: [...prev.activeChat.messages, newMsg],
+                        ...appState.activeChat,
+                        messages: [...appState.activeChat.messages, newMsg],
                         last_message: newMsg.text,
                         timestamp: newMsg.timestamp
                       },
-                      chats: prev.chats.map(chat => 
-                        chat.id === prev.activeChat.id 
+                      chats: appState.chats.map(chat => 
+                        chat.id === appState.activeChat.id 
                           ? { ...chat, last_message: newMsg.text, timestamp: newMsg.timestamp }
                           : chat
                       )
-                    }));
+                    });
                   }
                 }}
                 style={{
@@ -2749,21 +3832,20 @@ if (!appState.showAddItem) {
                       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                     };
                     
-                    setAppState(prev => ({
-                      ...prev,
+                    updateState({
                       newMessage: '',
                       activeChat: {
-                        ...prev.activeChat,
-                        messages: [...prev.activeChat.messages, newMsg],
+                        ...appState.activeChat,
+                        messages: [...appState.activeChat.messages, newMsg],
                         last_message: newMsg.text,
                         timestamp: newMsg.timestamp
                       },
-                      chats: prev.chats.map(chat => 
-                        chat.id === prev.activeChat.id 
+                      chats: appState.chats.map(chat => 
+                        chat.id === appState.activeChat.id 
                           ? { ...chat, last_message: newMsg.text, timestamp: newMsg.timestamp }
                           : chat
                       )
-                    }));
+                    });
                   }
                 }}
                 disabled={!appState.newMessage.trim()}
@@ -2803,210 +3885,505 @@ if (!appState.showAddItem) {
           }}>
             <div style={{
               background: 'white',
-              borderRadius: '15px',
-              padding: '30px',
+              borderRadius: '20px',
               width: '90%',
               maxWidth: '500px',
-              maxHeight: '80vh',
-              overflow: 'auto'
+              maxHeight: '85vh',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden'
             }}>
-              <h2 style={{ marginBottom: '25px', fontSize: '20px', color: '#333' }}>⚙️ Customize Your Experience</h2>
+              {/* Scrollable Content Area */}
+              <div style={{
+                padding: '30px 30px 20px 30px',
+                overflow: 'auto',
+                flex: 1
+              }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px' }}>
+                <h2 style={{ margin: 0, fontSize: '22px', color: '#333', fontWeight: '700' }}>
+                  ⚙️ Your Preferences
+                </h2>
+                <button
+                  onClick={() => updateState({ showSettings: false })}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    fontSize: '24px',
+                    cursor: 'pointer',
+                    color: '#666'
+                  }}
+                >
+                  ×
+                </button>
+              </div>
               
-              {/* Categories Section */}
-              <div style={{ marginBottom: '25px' }}>
-                <h3 style={{ marginBottom: '15px', fontSize: '16px', color: '#333' }}>What are you looking for?</h3>
-                <div style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(2, 1fr)',
-                  gap: '10px'
+              {/* Search Keywords Section */}
+              <div style={{ marginBottom: '30px' }}>
+                <h3 style={{ marginBottom: '10px', fontSize: '16px', color: '#333', fontWeight: '600' }}>
+                  🛍️ What are you shopping for?
+                </h3>
+                <input
+                  type="text"
+                  placeholder="e.g., vintage furniture, gaming setup, workout gear"
+                  value={appState.searchKeywords}
+                  onChange={(e) => updateState({ searchKeywords: e.target.value })}
+                  style={{
+                    width: '100%',
+                    padding: '15px',
+                    borderRadius: '12px',
+                    border: '2px solid #e1e8ff',
+                    fontSize: '16px',
+                    outline: 'none',
+                    background: '#f8f9ff',
+                    boxSizing: 'border-box'
+                  }}
+                />
+                {appState.searchKeywords && (
+                  <p style={{ 
+                    fontSize: '13px', 
+                    color: '#667eea', 
+                    marginTop: '8px',
+                    fontStyle: 'italic'
+                  }}>
+                    We'll prioritize "{appState.searchKeywords}" in your feed
+                  </p>
+                )}
+              </div>
+
+              {/* Budget Range Section */}
+              <div style={{ marginBottom: '30px' }}>
+                <h3 style={{ marginBottom: '15px', fontSize: '16px', color: '#333', fontWeight: '600' }}>
+                  💰 Your Budget Range
+                </h3>
+                <div style={{ 
+                  background: '#f8f9ff', 
+                  borderRadius: '15px', 
+                  padding: '20px', 
+                  border: '2px solid #e1e8ff'
                 }}>
-                  {categories.map((cat, i) => {
-                    const selected = appState.settingsCategories.includes(i);
-                    return (
-                      <div
-                        key={i}
-                        onClick={() => {
-                          const newCategories = selected
-                            ? appState.settingsCategories.filter(c => c !== i)
-                            : [...appState.settingsCategories, i];
-                          updateState({ settingsCategories: newCategories });
-                        }}
+                  <div style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '15px', textAlign: 'center', color: '#333' }}>
+                    ${appState.minPrice} - ${appState.maxPrice}
+                  </div>
+                  
+                  <div style={{ marginBottom: '15px' }}>
+                    <label style={{ display: 'block', marginBottom: '8px', fontSize: '13px', color: '#666' }}>
+                      Minimum: ${appState.minPrice}
+                    </label>
+                    <input
+                      type="range"
+                      min="5"
+                      max="1000"
+                      value={appState.minPrice}
+                      onChange={(e) => {
+                        const newMin = parseInt(e.target.value);
+                        updateState({ 
+                          minPrice: newMin,
+                          maxPrice: Math.max(newMin + 10, appState.maxPrice)
+                        });
+                      }}
+                      style={{
+                        width: '100%',
+                        height: '20px',
+                        borderRadius: '10px',
+                        background: '#e1e8ff',
+                        outline: 'none',
+                        cursor: 'pointer',
+                        WebkitAppearance: 'none',
+                        MozAppearance: 'none',
+                        appearance: 'none'
+                      }}
+                    />
+                  </div>
+                  
+                  <div style={{ marginBottom: '15px' }}>
+                    <label style={{ display: 'block', marginBottom: '8px', fontSize: '13px', color: '#666' }}>
+                      Maximum: ${appState.maxPrice}
+                    </label>
+                    <input
+                      type="range"
+                      min="10"
+                      max="2000"
+                      value={appState.maxPrice}
+                      onChange={(e) => {
+                        const newMax = parseInt(e.target.value);
+                        updateState({ 
+                          maxPrice: newMax,
+                          minPrice: Math.min(appState.minPrice, newMax - 10)
+                        });
+                      }}
+                      style={{
+                        width: '100%',
+                        height: '20px',
+                        borderRadius: '10px',
+                        background: '#e1e8ff',
+                        outline: 'none',
+                        cursor: 'pointer',
+                        WebkitAppearance: 'none',
+                        MozAppearance: 'none',
+                        appearance: 'none'
+                      }}
+                    />
+                  </div>
+                  
+                  <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                    {[
+                      { min: 10, max: 50, label: 'Under $50' },
+                      { min: 25, max: 200, label: '$25-200' },
+                      { min: 100, max: 500, label: '$100-500' },
+                      { min: 200, max: 1000, label: '$200+' }
+                    ].map((preset) => (
+                      <button
+                        key={preset.label}
+                        onClick={() => updateState({ minPrice: preset.min, maxPrice: preset.max })}
                         style={{
-                          background: selected ? '#667eea' : '#f5f5f5',
-                          color: selected ? 'white' : '#333',
-                          border: selected ? '2px solid #4CAF50' : '2px solid #ddd',
-                          borderRadius: '10px',
-                          padding: '12px 8px',
+                          background: '#667eea',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '12px',
+                          padding: '6px 10px',
+                          fontSize: '11px',
                           cursor: 'pointer',
-                          fontSize: '12px',
-                          fontWeight: 'bold',
-                          textAlign: 'center',
-                          position: 'relative',
-                          minHeight: '50px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center'
+                          fontWeight: '500'
                         }}
                       >
-                        {selected && (
-                          <div style={{
-                            position: 'absolute',
-                            top: '4px',
-                            right: '4px',
-                            background: '#4CAF50',
-                            color: 'white',
-                            borderRadius: '50%',
-                            width: '16px',
-                            height: '16px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            fontSize: '10px'
-                          }}>
-                            ✓
-                          </div>
-                        )}
-                        {cat}
-                      </div>
-                    );
-                  })}
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 
-              {/* Price Range Section */}
-              <div style={{ marginBottom: '25px' }}>
-                <h3 style={{ marginBottom: '15px', fontSize: '16px', color: '#333' }}>Price Range</h3>
+              {/* Distance Range Section */}
+              <div style={{ marginBottom: '30px' }}>
+                <h3 style={{ marginBottom: '15px', fontSize: '16px', color: '#333', fontWeight: '600' }}>
+                  📍 Travel Distance
+                </h3>
+                <div style={{ 
+                  background: '#f8f9ff', 
+                  borderRadius: '15px', 
+                  padding: '20px', 
+                  border: '2px solid #e1e8ff'
+                }}>
+                  <div style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '8px', textAlign: 'center', color: '#333' }}>
+                    {appState.searchRadius} miles
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#666', marginBottom: '15px', textAlign: 'center' }}>
+                    ~{appState.searchRadius <= 5 ? '10-15 min' : 
+                      appState.searchRadius <= 15 ? '15-30 min' : 
+                      appState.searchRadius <= 30 ? '30-45 min' : '45+ min'} drive time
+                  </div>
+                  
+                  <input
+                    type="range"
+                    min="1"
+                    max="50"
+                    value={appState.searchRadius}
+                    onChange={(e) => updateState({ searchRadius: parseInt(e.target.value) })}
+                    style={{
+                      width: '100%',
+                      height: '25px',
+                      borderRadius: '12px',
+                      background: '#e1e8ff',
+                      outline: 'none',
+                      marginBottom: '15px',
+                      cursor: 'pointer',
+                      WebkitAppearance: 'none',
+                      MozAppearance: 'none',
+                      appearance: 'none'
+                    }}
+                  />
+                  
+                  <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                    {[5, 15, 25, 40].map((distance) => (
+                      <button
+                        key={distance}
+                        onClick={() => updateState({ searchRadius: distance })}
+                        style={{
+                          background: appState.searchRadius === distance ? '#667eea' : '#e1e8ff',
+                          color: appState.searchRadius === distance ? 'white' : '#333',
+                          border: 'none',
+                          borderRadius: '12px',
+                          padding: '6px 10px',
+                          fontSize: '11px',
+                          cursor: 'pointer',
+                          fontWeight: '500'
+                        }}
+                      >
+                        {distance}mi
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Condition Preference Section */}
+              <div style={{ marginBottom: '30px' }}>
+                <h3 style={{ marginBottom: '15px', fontSize: '16px', color: '#333', fontWeight: '600' }}>
+                  ✨ Item Condition Preference
+                </h3>
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                  {['$10-50', '$50-100', '$100-200', '$200+'].map((priceOption, i) => (
+                  {[
+                    { value: 'new', label: 'New only' },
+                    { value: 'like-new', label: 'Like new' },
+                    { value: 'good', label: 'Good condition' },
+                    { value: 'any', label: 'Any condition' }
+                  ].map((condition) => (
                     <button
-                      key={priceOption}
-                      onClick={() => updateState({ settingsPriceRange: i })}
+                      key={condition.value}
+                      onClick={() => updateState({ conditionPreference: condition.value })}
                       style={{
-                        background: appState.settingsPriceRange === i ? '#667eea' : '#f5f5f5',
-                        color: appState.settingsPriceRange === i ? 'white' : '#333',
-                        border: appState.settingsPriceRange === i ? '2px solid #4CAF50' : '2px solid #ddd',
-                        borderRadius: '10px',
-                        padding: '8px 12px',
+                        background: appState.conditionPreference === condition.value ? '#667eea' : '#f5f5f5',
+                        color: appState.conditionPreference === condition.value ? 'white' : '#333',
+                        border: '2px solid ' + (appState.conditionPreference === condition.value ? '#667eea' : '#ddd'),
+                        borderRadius: '12px',
+                        padding: '10px 15px',
+                        fontSize: '13px',
                         cursor: 'pointer',
-                        fontWeight: 'bold',
-                        fontSize: '12px'
+                        fontWeight: '500'
                       }}
                     >
-                      {priceOption}
+                      {condition.label}
                     </button>
                   ))}
                 </div>
               </div>
 
-              {/* Location Radius Section */}
-              <div style={{ marginBottom: '25px' }}>
-                <h3 style={{ marginBottom: '15px', fontSize: '16px', color: '#333' }}>Search Radius</h3>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  <input
-                    type="range"
-                    min="1"
-                    max="50"
-                    value={appState.settingsLocationRadius}
-                    onChange={(e) => updateState({ settingsLocationRadius: parseInt(e.target.value) })}
-                    style={{
-                      width: '100%',
-                      height: '8px',
-                      borderRadius: '5px',
-                      background: '#ddd',
-                      outline: 'none'
-                    }}
-                  />
-                  <div style={{ 
-                    textAlign: 'center', 
-                    fontSize: '14px', 
-                    color: '#667eea', 
-                    fontWeight: 'bold' 
-                  }}>
-                    📍 {appState.settingsLocationRadius} miles
-                  </div>
-                </div>
-              </div>
-
-              {/* Shopping Style Section */}
+              {/* Deal Alerts Section */}
               <div style={{ marginBottom: '30px' }}>
-                <h3 style={{ marginBottom: '15px', fontSize: '16px', color: '#333' }}>Shopping Style</h3>
-                {['🎯 Hunt specific items', '🔍 Browse & discover', '💰 Find deals'].map((styleOption, i) => (
-                  <div
-                    key={styleOption}
-                    onClick={() => updateState({ settingsShoppingStyle: i })}
-                    style={{
-                      background: appState.settingsShoppingStyle === i ? '#667eea' : '#f5f5f5',
-                      color: appState.settingsShoppingStyle === i ? 'white' : '#333',
-                      border: appState.settingsShoppingStyle === i ? '2px solid #4CAF50' : '2px solid #ddd',
-                      borderRadius: '10px',
-                      padding: '12px',
-                      margin: '6px 0',
-                      cursor: 'pointer',
-                      fontWeight: 'bold',
-                      fontSize: '14px',
-                      position: 'relative'
-                    }}
-                  >
-                    {appState.settingsShoppingStyle === i && (
-                      <div style={{
-                        position: 'absolute',
-                        top: '8px',
-                        right: '12px',
-                        background: '#4CAF50',
-                        color: 'white',
-                        borderRadius: '50%',
-                        width: '18px',
-                        height: '18px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: '10px'
-                      }}>
-                        ✓
-                      </div>
-                    )}
-                    {styleOption}
-                  </div>
-                ))}
+                <label style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={appState.wantDealAlerts}
+                    onChange={(e) => updateState({ wantDealAlerts: e.target.checked })}
+                    style={{ transform: 'scale(1.3)' }}
+                  />
+                  <span style={{ fontSize: '15px', color: '#333' }}>
+                    📱 Notify me about great deals matching my interests
+                  </span>
+                </label>
               </div>
 
-              {/* Action Buttons */}
-              <div style={{ display: 'flex', gap: '10px' }}>
+              {/* Debug: Reset Tutorial Button */}
+              <div style={{ marginBottom: '15px' }}>
+                <button
+                  onClick={() => {
+                    resetTutorial();
+                    updateState({ showSettings: false });
+                  }}
+                  style={{
+                    width: '100%',
+                    background: '#ff9800',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '12px',
+                    padding: '10px',
+                    fontSize: '14px',
+                    fontWeight: 'bold',
+                    cursor: 'pointer'
+                  }}
+                >
+                  🔄 Reset Tutorial (for testing)
+                </button>
+              </div>
+              </div>
+
+              {/* Fixed Action Buttons Area */}
+              <div style={{
+                padding: '15px 30px 25px 30px',
+                borderTop: '1px solid #f0f0f0',
+                background: 'white',
+                borderRadius: '0 0 20px 20px'
+              }}>
+                {/* Action Buttons */}
+              <div style={{ display: 'flex', gap: '12px' }}>
                 <button
                   onClick={() => updateState({ showSettings: false })}
                   style={{
                     flex: 1,
-                    background: '#ddd',
+                    background: '#f5f5f5',
                     color: '#666',
-                    border: 'none',
-                    borderRadius: '12px',
-                    padding: '12px',
-                    fontWeight: 'bold',
-                    cursor: 'pointer'
+                    border: '2px solid #ddd',
+                    borderRadius: '15px',
+                    padding: '15px',
+                    fontWeight: '600',
+                    cursor: 'pointer',
+                    fontSize: '14px'
                   }}
                 >
                   Cancel
                 </button>
                 <button
-                  onClick={saveSettings}
+                  onClick={() => {
+                    // Save the new preferences
+                    const updatedUser = {
+                      ...user,
+                      preferences: {
+                        ...user.preferences,
+                        searchKeywords: appState.searchKeywords,
+                        minPrice: appState.minPrice,
+                        maxPrice: appState.maxPrice,
+                        searchRadius: appState.searchRadius,
+                        conditionPreference: appState.conditionPreference,
+                        wantDealAlerts: appState.wantDealAlerts
+                      }
+                    };
+                    setGlobalUser(updatedUser);
+                    updateState({ showSettings: false });
+                    console.log('✅ Preferences updated:', updatedUser.preferences);
+                  }}
                   style={{
                     flex: 2,
-                    background: '#4CAF50',
+                    background: '#667eea',
                     color: 'white',
                     border: 'none',
-                    borderRadius: '12px',
-                    padding: '12px',
-                    fontWeight: 'bold',
-                    cursor: 'pointer'
+                    borderRadius: '15px',
+                    padding: '15px',
+                    fontWeight: '600',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    boxShadow: '0 4px 15px rgba(102, 126, 234, 0.3)'
                   }}
                 >
                   💾 Save Preferences
                 </button>
               </div>
+              </div>
             </div>
           </div>
         )}
 
+        {/* Swipe Tutorial Modal */}
+        {appState.showSwipeTutorial && (
+          <div style={{
+            position: 'fixed',
+            top: 'max(0px, env(safe-area-inset-top))',
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0,0,0,0.8)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: '20px'
+          }}>
+            <div style={{
+              background: 'white',
+              borderRadius: '20px',
+              padding: '30px 25px',
+              maxWidth: '400px',
+              width: '100%',
+              textAlign: 'center',
+              position: 'relative'
+            }}>
+              {/* Close Button */}
+              <button
+                onClick={hideSwipeTutorial}
+                style={{
+                  position: 'absolute',
+                  top: '15px',
+                  right: '15px',
+                  background: 'rgba(0,0,0,0.1)',
+                  border: 'none',
+                  borderRadius: '50%',
+                  width: '30px',
+                  height: '30px',
+                  cursor: 'pointer',
+                  fontSize: '16px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}
+              >
+                ✕
+              </button>
+              
+              {/* Tutorial Content */}
+              <div style={{ fontSize: '48px', marginBottom: '20px' }}>👋</div>
+              <h2 style={{ 
+                marginBottom: '25px', 
+                fontSize: '24px', 
+                fontWeight: '700',
+                color: '#333'
+              }}>
+                How to Use SwipeCity
+              </h2>
+              
+              <div style={{ textAlign: 'left', marginBottom: '25px' }}>
+                <div style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  marginBottom: '15px',
+                  padding: '15px',
+                  background: '#f8f9fa',
+                  borderRadius: '12px'
+                }}>
+                  <div style={{ fontSize: '24px', marginRight: '15px' }}>👈</div>
+                  <div>
+                    <strong>Swipe Left (Pass)</strong><br/>
+                    <span style={{ color: '#666', fontSize: '14px' }}>Not interested in this item</span>
+                  </div>
+                </div>
+                
+                <div style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  marginBottom: '15px',
+                  padding: '15px',
+                  background: '#f8f9fa',
+                  borderRadius: '12px'
+                }}>
+                  <div style={{ fontSize: '24px', marginRight: '15px' }}>👉</div>
+                  <div>
+                    <strong>Swipe Right (Like)</strong><br/>
+                    <span style={{ color: '#666', fontSize: '14px' }}>Show interest in this item</span>
+                  </div>
+                </div>
+                
+                <div style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  marginBottom: '15px',
+                  padding: '15px',
+                  background: '#f8f9fa',
+                  borderRadius: '12px'
+                }}>
+                  <div style={{ fontSize: '24px', marginRight: '15px' }}>🔖</div>
+                  <div>
+                    <strong>Save for Later</strong><br/>
+                    <span style={{ color: '#666', fontSize: '14px' }}>Tap the button to save items you want to consider</span>
+                  </div>
+                </div>
+              </div>
+              
+              <p style={{ 
+                color: '#666', 
+                fontSize: '14px', 
+                marginBottom: '25px',
+                fontStyle: 'italic'
+              }}>
+                Watch for "LIKE" and "PASS" indicators as you swipe!
+              </p>
+              
+              <button
+                onClick={hideSwipeTutorial}
+                style={{
+                  background: '#667eea',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '25px',
+                  padding: '15px 30px',
+                  fontSize: '16px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  width: '100%'
+                }}
+              >
+                Got it! Let's start swiping
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Overlay for profile panel */}
         {appState.showProfile && (
@@ -3093,7 +4470,9 @@ if (!appState.showAddItem) {
       position: 'relative',
       overflow: 'hidden',
       paddingTop: 'env(safe-area-inset-top)',
-      paddingBottom: '100px' // Space for bottom navigation
+      paddingBottom: /android/i.test(navigator.userAgent) || window.Capacitor?.getPlatform?.() === 'android'
+        ? '140px' // More space for Android (nav bar + bottom nav)
+        : '100px' // iOS space for bottom navigation
     }}>
 
       {/* Seller Content */}
@@ -3104,13 +4483,17 @@ if (!appState.showAddItem) {
             flex: 1,
             padding: '20px',
             background: '#f8f9fa',
-            margin: '5px 15px',
+            margin: /android/i.test(navigator.userAgent) || window.Capacitor?.getPlatform?.() === 'android'
+              ? '40px 15px 5px 15px' // More top margin on Android to move down
+              : '5px 15px', // Original iOS margin
             borderRadius: '20px',
             maxWidth: '600px',
             alignSelf: 'center',
             width: '100%',
             boxSizing: 'border-box',
-            border: '1px solid #e9ecef'
+            border: '1px solid #e9ecef',
+            overflowY: 'auto',
+            maxHeight: 'calc(100vh - 160px)' // Ensure scrolling within viewport
           }}>
             <div style={{ display: 'flex', gap: '15px', marginBottom: '20px', justifyContent: 'center' }}>
               <button
@@ -3247,66 +4630,137 @@ if (!appState.showAddItem) {
             if (listingInterests.length > 0) {
               return (
                 <div style={{
-                  marginTop: '10px',
-                  padding: '8px',
-                  background: '#f8f9ff',
-                  borderRadius: '6px',
-                  border: '1px solid #e1e8ff'
+                  marginTop: '15px',
+                  padding: '12px',
+                  background: 'linear-gradient(135deg, #f8f9ff, #e8ecff)',
+                  borderRadius: '10px',
+                  border: '2px solid #667eea',
+                  boxShadow: '0 2px 8px rgba(102, 126, 234, 0.15)'
                 }}>
                   <div style={{
-                    fontSize: '12px',
+                    fontSize: '14px',
                     color: '#667eea',
                     fontWeight: 'bold',
-                    marginBottom: '6px',
+                    marginBottom: '10px',
                     display: 'flex',
                     alignItems: 'center',
-                    gap: '4px'
+                    gap: '6px'
                   }}>
-                    <span>💫</span>
-                    {listingInterests.length} interested buyer{listingInterests.length !== 1 ? 's' : ''}
+                    <span style={{ fontSize: '16px' }}>💫</span>
+                    <span>{listingInterests.length} Interested Buyer{listingInterests.length !== 1 ? 's' : ''}</span>
                   </div>
                   <div style={{
-                    maxHeight: '200px',
+                    maxHeight: '400px', // Increased height for better viewing
                     overflowY: 'auto',
-                    gap: '6px',
+                    gap: '10px',
                     display: 'flex',
-                    flexDirection: 'column'
+                    flexDirection: 'column',
+                    scrollbarWidth: 'thin', // Firefox
+                    scrollbarColor: '#667eea transparent', // Firefox
+                    paddingRight: '5px'
                   }}>
                     {listingInterests.map((interest, index) => {
                     const buyer = appState.users[interest.buyerId];
                     return (
-                      <div key={interest.id} style={{
-                        background: '#ffffff',
-                        border: '1px solid #e0e7ff',
-                        borderRadius: '6px',
-                        padding: '8px'
-                      }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                      <div 
+                        key={interest.id} 
+                        onClick={(e) => {
+                          e.stopPropagation(); // Prevent event from bubbling up to parent listing card
+                          // Navigate to buyer profile
+                          if (buyer) {
+                            alert(`Buyer Profile:\n\nName: ${buyer.name || interest.buyerName}\nRating: ${buyer.rating || 'N/A'}/5\nTotal Purchases: ${buyer.totalPurchases || 0}\nResponse Time: ${buyer.responseTime || 'N/A'}\nLocation: ${buyer.location || 'N/A'}\n\nBio: ${buyer.bio || 'No bio available'}\n\nMember since: ${new Date(buyer.created_at || Date.now()).toLocaleDateString()}`);
+                          }
+                        }}
+                        style={{
+                          background: '#ffffff',
+                          border: '1px solid #d0d8ff',
+                          borderRadius: '8px',
+                          padding: '12px',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s ease',
+                          ':hover': {
+                            transform: 'translateY(-1px)',
+                            boxShadow: '0 3px 10px rgba(102, 126, 234, 0.2)'
+                          }
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.transform = 'translateY(-1px)';
+                          e.currentTarget.style.boxShadow = '0 3px 10px rgba(102, 126, 234, 0.2)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.transform = 'translateY(0)';
+                          e.currentTarget.style.boxShadow = 'none';
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
                           <img
                             src={buyer?.avatar || interest.buyerAvatar}
                             alt={interest.buyerName}
                             style={{
-                              width: '18px',
-                              height: '18px',
+                              width: '32px',
+                              height: '32px',
                               borderRadius: '50%',
-                              objectFit: 'cover'
+                              objectFit: 'cover',
+                              border: '2px solid #e0e7ff'
                             }}
                           />
-                          <span style={{ fontSize: '11px', fontWeight: '500', color: '#333' }}>
-                            {interest.buyerName}
-                          </span>
-                          {buyer?.verified && (
-                            <span style={{ color: '#4CAF50', fontSize: '8px' }}>✓</span>
-                          )}
+                          <div style={{ flex: 1 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                              <span style={{ fontSize: '14px', fontWeight: '600', color: '#333' }}>
+                                {interest.buyerName}
+                              </span>
+                              {buyer?.verified && (
+                                <span style={{ color: '#4CAF50', fontSize: '12px' }} title="Verified Buyer">✓</span>
+                              )}
+                            </div>
+                            {buyer && buyer.location && (
+                              <div style={{ fontSize: '11px', color: '#888', marginTop: '2px' }}>
+                                📍 {buyer.location}
+                              </div>
+                            )}
+                          </div>
                         </div>
                         
                         {buyer && (
-                          <div style={{ fontSize: '10px', color: '#666', marginBottom: '6px' }}>
-                            <div style={{ display: 'flex', gap: '8px', marginBottom: '4px' }}>
-                              <span>⭐ {buyer.rating}/5 ({buyer.reviewCount})</span>
-                              <span>📦 {buyer.totalPurchases} purchases</span>
-                              <span>⚡ {buyer.responseTime}</span>
+                          <div style={{ marginTop: '8px', marginBottom: '8px' }}>
+                            {/* Buyer Stats */}
+                            <div style={{ 
+                              display: 'flex', 
+                              gap: '10px', 
+                              marginBottom: '8px',
+                              fontSize: '12px',
+                              color: '#555'
+                            }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                <span style={{ color: '#FFA726' }}>⭐</span>
+                                <span>{buyer.rating}/5</span>
+                                <span style={{ color: '#999' }}>({buyer.reviewCount})</span>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                <span>📦</span>
+                                <span>{buyer.totalPurchases} buys</span>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                <span>⚡</span>
+                                <span>{buyer.responseTime}</span>
+                              </div>
                             </div>
+                            
+                            {/* Brief Description */}
+                            {buyer.bio && (
+                              <div style={{
+                                fontSize: '11px',
+                                color: '#666',
+                                fontStyle: 'italic',
+                                marginBottom: '6px',
+                                padding: '6px',
+                                background: '#f5f7ff',
+                                borderRadius: '4px',
+                                borderLeft: '3px solid #667eea'
+                              }}>
+                                "{buyer.bio.substring(0, 100)}{buyer.bio.length > 100 ? '...' : ''}"
+                              </div>
+                            )}
                             
                             {(() => {
                               // Algorithm-based badges for buyers
@@ -3358,7 +4812,7 @@ if (!appState.showAddItem) {
                           </div>
                         )}
                         
-                        <div style={{ display: 'flex', gap: '4px' }}>
+                        <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -3366,17 +4820,25 @@ if (!appState.showAddItem) {
                             }}
                             style={{
                               flex: 1,
-                              background: '#4CAF50',
+                              background: 'linear-gradient(135deg, #4CAF50, #45a049)',
                               color: 'white',
                               border: 'none',
-                              borderRadius: '3px',
-                              padding: '4px 6px',
-                              fontSize: '9px',
+                              borderRadius: '6px',
+                              padding: '10px 15px',
+                              fontSize: '13px',
                               cursor: 'pointer',
-                              fontWeight: 'bold'
+                              fontWeight: 'bold',
+                              transition: 'all 0.2s ease',
+                              boxShadow: '0 2px 4px rgba(76, 175, 80, 0.2)'
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.transform = 'scale(1.02)';
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.transform = 'scale(1)';
                             }}
                           >
-                            ✓ Approve
+                            ✓ Accept
                           </button>
                           <button
                             onClick={(e) => {
@@ -3385,14 +4847,22 @@ if (!appState.showAddItem) {
                             }}
                             style={{
                               flex: 1,
-                              background: '#f44336',
+                              background: 'linear-gradient(135deg, #ff6b6b, #f44336)',
                               color: 'white',
                               border: 'none',
-                              borderRadius: '3px',
-                              padding: '4px 6px',
-                              fontSize: '9px',
+                              borderRadius: '6px',
+                              padding: '10px 15px',
+                              fontSize: '13px',
                               cursor: 'pointer',
-                              fontWeight: 'bold'
+                              fontWeight: 'bold',
+                              transition: 'all 0.2s ease',
+                              boxShadow: '0 2px 4px rgba(244, 67, 54, 0.2)'
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.transform = 'scale(1.02)';
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.transform = 'scale(1)';
                             }}
                           >
                             ✗ Decline
@@ -3433,9 +4903,13 @@ if (!appState.showAddItem) {
           <div style={{
             flex: 1,
             display: 'flex',
-            alignItems: 'flex-start',
+            alignItems: /android/i.test(navigator.userAgent) || window.Capacitor?.getPlatform?.() === 'android'
+              ? 'center' // Center vertically on Android  
+              : 'flex-start', // Keep higher on iOS
             justifyContent: 'center',
-            padding: '15px 15px 25px 15px',
+            padding: /android/i.test(navigator.userAgent) || window.Capacitor?.getPlatform?.() === 'android'
+              ? '40px 15px 25px 15px' // More top padding on Android to move card down
+              : '15px 15px 25px 15px', // Original iOS padding
             minHeight: 'calc(100vh - 170px)'
           }}>
             <div style={{
@@ -3556,9 +5030,9 @@ if (!appState.showAddItem) {
 
           {/* Photo Upload Section */}
           <div style={{ marginBottom: '25px' }}>
-            <h3 style={{ color: '#333', marginBottom: '8px', fontSize: '16px' }}>Photos (up to 4)</h3>
+            <h3 style={{ color: '#333', marginBottom: '8px', fontSize: '16px' }}>📸 Photos (up to 4) - Camera Only</h3>
             <p style={{ color: '#666', fontSize: '12px', marginBottom: '15px' }}>
-              First photo will be the main image. Tap ★ to see main photo.
+              🛡️ <strong>Bot Prevention:</strong> Photos must be taken with your camera (no uploads from gallery). First photo will be the main image.
             </p>
             <div style={{
               display: 'grid',
@@ -3583,24 +5057,34 @@ if (!appState.showAddItem) {
                       objectFit: 'cover'
                     }}
                   />
-                  {/* Photo number indicator */}
-                  <div style={{
-                    position: 'absolute',
-                    top: '5px',
-                    left: '5px',
-                    background: index === 0 ? 'rgba(76, 175, 80, 0.9)' : 'rgba(0, 0, 0, 0.7)',
-                    color: 'white',
-                    borderRadius: '50%',
-                    width: '20px',
-                    height: '20px',
-                    fontSize: '11px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontWeight: 'bold'
-                  }}>
-                    {index === 0 ? '★' : index + 1}
-                  </div>
+                  {/* Set as Primary button for all photos */}
+                  <button
+                    onClick={() => {
+                      // Move this photo to the front
+                      const newImages = [...appState.selectedImages];
+                      const [movedImage] = newImages.splice(index, 1);
+                      newImages.unshift(movedImage);
+                      updateState({ selectedImages: newImages });
+                    }}
+                    style={{
+                      position: 'absolute',
+                      bottom: '5px',
+                      left: '5px',
+                      background: index === 0 ? 'rgba(76, 175, 80, 0.9)' : 'rgba(102, 126, 234, 0.9)',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '8px',
+                      padding: '4px 8px',
+                      cursor: 'pointer',
+                      fontSize: '10px',
+                      fontWeight: 'bold',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}
+                  >
+                    {index === 0 ? 'Primary' : 'Set as Primary'}
+                  </button>
                   
                   <button
                     onClick={() => {
@@ -3632,79 +5116,32 @@ if (!appState.showAddItem) {
               ))}
               
               {(!appState.selectedImages || appState.selectedImages.length < 4) && (
-                <div style={{ display: 'flex', gap: '10px' }}>
-                  <label htmlFor="photo-upload" style={{
-                    aspectRatio: '1/1',
-                    border: '2px dashed #ddd',
-                    borderRadius: '10px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    cursor: 'pointer',
-                    background: '#f9f9f9',
-                    transition: 'all 0.2s ease',
-                    minWidth: '80px',
-                    height: '80px'
-                  }}>
-                    <Camera size={20} style={{ color: '#666', marginBottom: '3px' }} />
-                    <span style={{ fontSize: '10px', color: '#666', textAlign: 'center' }}>Gallery</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      multiple
-                      style={{ display: 'none' }}
-                      id="photo-upload"
-                      onChange={(e) => {
-                        const files = Array.from(e.target.files);
-                        const currentImages = appState.selectedImages || [];
-                        
-                        if (currentImages.length + files.length > 4) {
-                          alert('Maximum 4 photos allowed');
-                          return;
-                        }
-                      
-                      files.forEach(file => {
-                        const reader = new FileReader();
-                        reader.onload = (event) => {
-                          const newImage = {
-                            file: file,
-                            url: event.target.result,
-                            name: file.name
-                          };
-                          updateState({ 
-                            selectedImages: [...(appState.selectedImages || []), newImage] 
-                          });
-                        };
-                        reader.readAsDataURL(file);
-                      });
-                    }}
-                  />
-                </label>
-                
                 <label htmlFor="camera-capture" style={{
                   aspectRatio: '1/1',
                   border: '2px dashed #4CAF50',
-                  borderRadius: '10px',
+                  borderRadius: '12px',
                   display: 'flex',
                   flexDirection: 'column',
                   alignItems: 'center',
                   justifyContent: 'center',
                   cursor: 'pointer',
-                  background: '#f0f8f0',
+                  background: 'linear-gradient(135deg, #f0f9f0, #e8f5e8)',
                   transition: 'all 0.2s ease',
-                  minWidth: '80px',
-                  height: '80px'
+                  minWidth: '120px',
+                  height: '120px',
+                  position: 'relative',
+                  boxShadow: '0 2px 8px rgba(76, 175, 80, 0.1)'
                 }}>
-                  <Camera size={20} style={{ color: '#4CAF50', marginBottom: '3px' }} />
-                  <span style={{ fontSize: '10px', color: '#4CAF50', textAlign: 'center' }}>Camera</span>
+                  <Camera size={24} style={{ color: '#4CAF50', marginBottom: '5px' }} />
+                  <span style={{ fontSize: '12px', color: '#4CAF50', textAlign: 'center', fontWeight: '600' }}>Take Photo</span>
+                  <span style={{ fontSize: '9px', color: '#666', textAlign: 'center', marginTop: '2px' }}>Camera Only 🛡️</span>
                   <input
                     type="file"
                     accept="image/*"
                     capture="environment"
                     style={{ display: 'none' }}
                     id="camera-capture"
-                    onChange={(e) => {
+                    onChange={async (e) => {
                       const files = Array.from(e.target.files);
                       const currentImages = appState.selectedImages || [];
                       
@@ -3713,24 +5150,46 @@ if (!appState.showAddItem) {
                         return;
                       }
                       
-                      files.forEach(file => {
+                      for (const file of files) {
+                        // Generate verification question
+                        const questions = [
+                          "What's the main color of your item?",
+                          "How many items are shown in this photo?",
+                          "Is this item indoors or outdoors?",
+                          "Is there text visible on your item?",
+                          "What category best describes this item?"
+                        ];
+                        
+                        const randomQuestion = questions[Math.floor(Math.random() * questions.length)];
+                        
+                        // Show verification dialog
+                        const answer = prompt(`🤖 Quick verification: ${randomQuestion}\n\n(This helps prevent bots from posting fake items)`);
+                        
+                        if (!answer || answer.trim().length < 2) {
+                          alert('Please provide an answer to continue posting.');
+                          return;
+                        }
+                        
                         const reader = new FileReader();
                         reader.onload = (event) => {
                           const newImage = {
                             file: file,
                             url: event.target.result,
-                            name: file.name
+                            name: file.name,
+                            timestamp: Date.now(),
+                            verified: true,
+                            verificationQuestion: randomQuestion,
+                            verificationAnswer: answer.trim()
                           };
                           updateState({ 
                             selectedImages: [...(appState.selectedImages || []), newImage] 
                           });
                         };
                         reader.readAsDataURL(file);
-                      });
+                      }
                     }}
                   />
                 </label>
-                </div>
               )}
             </div>
           </div>
@@ -3837,10 +5296,10 @@ if (!appState.showAddItem) {
               // Create new listing object
               const newListing = {
                 id: 'listing_' + Date.now(),
-                title: appState.newItemTitle,
+                title: SecurityUtils.sanitizeInputFinal(appState.newItemTitle),
                 price: appState.newItemPrice,
                 condition: appState.newItemCondition,
-                description: appState.newItemDescription,
+                description: SecurityUtils.sanitizeInputFinal(appState.newItemDescription),
                 images: appState.selectedImages,
                 seller_id: user?.id || 'user123',
                 seller_name: user?.username || 'You',
@@ -3940,7 +5399,7 @@ if (!appState.showAddItem) {
                     padding: '10px',
                     borderRadius: '6px',
                     border: '1px solid #ddd',
-                    fontSize: '14px',
+                    fontSize: '16px',
                     boxSizing: 'border-box'
                   }}
                 />
@@ -3959,7 +5418,7 @@ if (!appState.showAddItem) {
                     padding: '10px',
                     borderRadius: '6px',
                     border: '1px solid #ddd',
-                    fontSize: '14px',
+                    fontSize: '16px',
                     boxSizing: 'border-box'
                   }}
                 />
@@ -4002,7 +5461,7 @@ if (!appState.showAddItem) {
                     padding: '10px',
                     borderRadius: '6px',
                     border: '1px solid #ddd',
-                    fontSize: '14px',
+                    fontSize: '16px',
                     boxSizing: 'border-box',
                     resize: 'vertical'
                   }}
@@ -4038,24 +5497,34 @@ if (!appState.showAddItem) {
                           objectFit: 'cover'
                         }}
                       />
-                      {/* Photo number indicator */}
-                      <div style={{
-                        position: 'absolute',
-                        top: '5px',
-                        left: '5px',
-                        background: index === 0 ? 'rgba(76, 175, 80, 0.9)' : 'rgba(0, 0, 0, 0.7)',
-                        color: 'white',
-                        borderRadius: '50%',
-                        width: '20px',
-                        height: '20px',
-                        fontSize: '11px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontWeight: 'bold'
-                      }}>
-                        {index === 0 ? '★' : index + 1}
-                      </div>
+                      {/* Set as Primary button for all photos */}
+                      <button
+                        onClick={() => {
+                          // Move this photo to the front
+                          const newImages = [...appState.editImages];
+                          const [movedImage] = newImages.splice(index, 1);
+                          newImages.unshift(movedImage);
+                          updateState({ editImages: newImages });
+                        }}
+                        style={{
+                          position: 'absolute',
+                          bottom: '5px',
+                          left: '5px',
+                          background: index === 0 ? 'rgba(76, 175, 80, 0.9)' : 'rgba(102, 126, 234, 0.9)',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '8px',
+                          padding: '4px 8px',
+                          cursor: 'pointer',
+                          fontSize: '10px',
+                          fontWeight: 'bold',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center'
+                        }}
+                      >
+                        {index === 0 ? 'Primary' : 'Set as Primary'}
+                      </button>
                       
                       <button
                         onClick={() => {
@@ -4291,7 +5760,9 @@ if (!appState.showAddItem) {
             }}>
             <div style={{
               padding: '15px 20px',
-              paddingTop: 'max(15px, env(safe-area-inset-top))',
+              paddingTop: /android/i.test(navigator.userAgent) || window.Capacitor?.getPlatform?.() === 'android'
+                ? 'max(60px, env(safe-area-inset-top) + 45px)' // Much more padding on Android to clear admin button
+                : 'max(15px, env(safe-area-inset-top))', // Original iOS padding
               background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
               color: 'white',
               display: 'flex',
@@ -4334,7 +5805,11 @@ if (!appState.showAddItem) {
                       }}
                     />
                     <div style={{ flex: 1 }}>
-                      <h4 style={{ margin: 0, fontSize: '16px', color: '#333' }}>{chat.seller_name}</h4>
+                      <h4 style={{ margin: 0, fontSize: '16px', color: '#333' }}>
+                        {appState.currentMode === 'seller' 
+                          ? chat.buyer_name 
+                          : chat.seller_name}
+                      </h4>
                       <p style={{ margin: '0 0 5px 0', fontSize: '14px', color: '#666' }}>{chat.item_title}</p>
                       <p style={{ margin: 0, fontSize: '14px', color: '#888' }}>{chat.last_message}</p>
                     </div>
@@ -4396,7 +5871,97 @@ if (!appState.showAddItem) {
                   }}
                 />
                 <h4 style={{ margin: '0 0 5px 0' }}>{user?.username}</h4>
-                <p style={{ color: '#666', margin: 0, fontSize: '14px' }}>{user?.email}</p>
+                <p style={{ color: '#666', margin: '0 0 10px 0', fontSize: '14px' }}>{user?.email}</p>
+                
+                {/* Bio Section */}
+                <div style={{ marginBottom: '15px' }}>
+                  {appState.editingBio ? (
+                    <div style={{ textAlign: 'center' }}>
+                      <textarea
+                        value={appState.tempBio}
+                        onChange={(e) => updateState({ tempBio: e.target.value })}
+                        placeholder="Tell others about yourself... (e.g., 'Trusted seller with quick responses' or 'Careful buyer, always pays promptly')"
+                        style={{
+                          width: '100%',
+                          minHeight: '80px',
+                          padding: '8px',
+                          border: '1px solid #ddd',
+                          borderRadius: '8px',
+                          fontSize: '16px', // Prevent iOS zoom by using 16px or larger
+                          fontFamily: 'inherit',
+                          resize: 'vertical',
+                          boxSizing: 'border-box',
+                          WebkitAppearance: 'none',
+                          appearance: 'none',
+                          touchAction: 'manipulation',
+                          userSelect: 'text',
+                          WebkitUserSelect: 'text'
+                        }}
+                        maxLength={200}
+                      />
+                      <div style={{ display: 'flex', gap: '8px', marginTop: '8px', justifyContent: 'center' }}>
+                        <button
+                          onClick={() => {
+                            // Save bio - in real app this would sync to backend
+                            const updatedUser = { ...user, bio: appState.tempBio };
+                            setGlobalUser(updatedUser);
+                            updateState({ editingBio: false, tempBio: '' });
+                          }}
+                          style={{
+                            background: '#4CAF50',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '6px',
+                            padding: '6px 12px',
+                            fontSize: '12px',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => updateState({ editingBio: false, tempBio: '' })}
+                          style={{
+                            background: '#e0e0e0',
+                            color: '#666',
+                            border: 'none',
+                            borderRadius: '6px',
+                            padding: '6px 12px',
+                            fontSize: '12px',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div 
+                      onClick={() => updateState({ editingBio: true, tempBio: user?.bio || '' })}
+                      style={{ 
+                        cursor: 'pointer',
+                        background: '#f8f9fa',
+                        padding: '10px',
+                        borderRadius: '8px',
+                        minHeight: '40px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        border: '1px dashed #ddd'
+                      }}
+                    >
+                      <p style={{ 
+                        color: user?.bio ? '#333' : '#999', 
+                        margin: 0, 
+                        fontSize: '12px', 
+                        textAlign: 'center',
+                        fontStyle: user?.bio ? 'normal' : 'italic'
+                      }}>
+                        {user?.bio || 'Add a bio to build trust with buyers and sellers • Click to edit'}
+                      </p>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {appState.currentMode === 'buyer' ? (
@@ -4547,12 +6112,15 @@ if (!appState.showAddItem) {
           right: 0,
           bottom: 0,
           background: 'white',
-          zIndex: 1000,
+          zIndex: 99999,
           display: 'flex',
           flexDirection: 'column'
         }}>
           <div style={{
             padding: '15px 20px',
+            paddingTop: /android/i.test(navigator.userAgent) || window.Capacitor?.getPlatform?.() === 'android'
+              ? 'max(60px, env(safe-area-inset-top) + 45px)' // Much more padding on Android to clear admin button
+              : 'max(15px, env(safe-area-inset-top))', // Original iOS padding
             background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
             color: 'white',
             display: 'flex',
@@ -4581,12 +6149,20 @@ if (!appState.showAddItem) {
                 ←
               </button>
               <div>
-                <h3 style={{ margin: 0, fontSize: '18px' }}>{appState.activeChat.seller_name}</h3>
+                <h3 style={{ margin: 0, fontSize: '18px' }}>
+                  {appState.currentMode === 'seller' 
+                    ? appState.activeChat.buyer_name 
+                    : appState.activeChat.seller_name}
+                </h3>
                 <p style={{ margin: 0, fontSize: '14px', opacity: 0.8 }}>{appState.activeChat.item_title}</p>
               </div>
             </div>
             <button
-              onClick={() => updateState({ showChats: false, activeChat: null })}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                updateState({ showChats: false, activeChat: null });
+              }}
               style={{
                 background: 'rgba(255,255,255,0.2)',
                 border: 'none',
@@ -4647,6 +6223,7 @@ if (!appState.showAddItem) {
 
           <div style={{
             padding: '15px 20px',
+            paddingBottom: 'max(15px, env(safe-area-inset-bottom))',
             background: 'white',
             borderTop: '1px solid #eee',
             display: 'flex',
@@ -4668,23 +6245,22 @@ if (!appState.showAddItem) {
                     timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                   };
                   
-                  setAppState(prev => ({
-                    ...prev,
+                  updateState({
                     newMessage: '',
                     activeChat: {
-                      ...prev.activeChat,
-                      messages: [...(prev.activeChat.messages || []), newMsg]
+                      ...appState.activeChat,
+                      messages: [...(appState.activeChat.messages || []), newMsg]
                     }
-                  }));
+                  });
                 }
               }}
               style={{
                 flex: 1,
                 padding: '12px 16px',
-                border: '1px solid #ddd',
                 borderRadius: '25px',
-                outline: 'none',
-                fontSize: '14px'
+                border: '1px solid #ddd',
+                fontSize: '16px',
+                outline: 'none'
               }}
             />
             <button
@@ -4698,14 +6274,13 @@ if (!appState.showAddItem) {
                     timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                   };
                   
-                  setAppState(prev => ({
-                    ...prev,
+                  updateState({
                     newMessage: '',
                     activeChat: {
-                      ...prev.activeChat,
-                      messages: [...(prev.activeChat.messages || []), newMsg]
+                      ...appState.activeChat,
+                      messages: [...(appState.activeChat.messages || []), newMsg]
                     }
-                  }));
+                  });
                 }
               }}
               disabled={!appState.newMessage.trim()}
@@ -4743,6 +6318,9 @@ if (!appState.showAddItem) {
         }}>
           <div style={{
             padding: '15px 20px',
+            paddingTop: /android/i.test(navigator.userAgent) || window.Capacitor?.getPlatform?.() === 'android'
+              ? 'max(60px, env(safe-area-inset-top) + 45px)' // Much more padding on Android to clear admin button
+              : 'max(15px, env(safe-area-inset-top))', // Original iOS padding
             background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
             color: 'white',
             display: 'flex',
@@ -4751,7 +6329,9 @@ if (!appState.showAddItem) {
           }}>
             <h2 style={{ margin: 0, fontSize: '20px' }}>💬 Messages</h2>
             <CloseButton 
-              onClick={() => updateState({ showChats: false })}
+              onClick={() => {
+                updateState({ showChats: false });
+              }}
             />
           </div>
           
@@ -4782,7 +6362,11 @@ if (!appState.showAddItem) {
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <div>
-                      <h4 style={{ margin: '0 0 5px 0', fontSize: '16px' }}>{chat.seller_name}</h4>
+                      <h4 style={{ margin: '0 0 5px 0', fontSize: '16px' }}>
+                        {appState.currentMode === 'seller' 
+                          ? chat.buyer_name 
+                          : chat.seller_name}
+                      </h4>
                       <p style={{ margin: '0 0 5px 0', fontSize: '14px', color: '#666' }}>{chat.item_title}</p>
                       <p style={{ margin: 0, fontSize: '13px', color: '#888' }}>
                         {chat.messages && chat.messages.length > 0 
@@ -4821,26 +6405,229 @@ if (!appState.showAddItem) {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
               <h3 style={{ margin: 0 }}>Profile</h3>
               <CloseButton 
-                onClick={() => updateState({ showProfile: false })}
+                onClick={() => {
+                  updateState({ showProfile: false });
+                }}
                 color="#333"
                 backgroundColor="rgba(0,0,0,0.1)"
               />
             </div>
             
             <div style={{ textAlign: 'center', marginBottom: '30px' }}>
-              <img
-                src={user?.avatar_url}
-                alt="Profile"
-                style={{
-                  width: '80px',
-                  height: '80px',
-                  borderRadius: '50%',
+              <div 
+                style={{ 
+                  position: 'relative', 
+                  display: 'inline-block',
                   marginBottom: '15px',
-                  objectFit: 'cover'
+                  cursor: 'pointer'
+                }}
+                onClick={() => {
+                  const input = document.getElementById('profile-photo-input');
+                  if (input) input.click();
+                }}
+              >
+                <img
+                  src={user?.avatar_url}
+                  alt="Profile"
+                  style={{
+                    width: '80px',
+                    height: '80px',
+                    borderRadius: '50%',
+                    objectFit: 'cover',
+                    border: '2px solid #667eea',
+                    opacity: appState.uploadingPhoto ? 0.7 : 1
+                  }}
+                />
+                <div style={{
+                  position: 'absolute',
+                  bottom: '-2px',
+                  right: '-2px',
+                  width: '24px',
+                  height: '24px',
+                  background: '#667eea',
+                  borderRadius: '50%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  border: '2px solid white',
+                  fontSize: '12px'
+                }}>
+                  📷
+                </div>
+              </div>
+              <input
+                id="profile-photo-input"
+                type="file"
+                accept="image/*"
+                capture="user"
+                style={{ display: 'none' }}
+                onChange={async (e) => {
+                  const file = e.target.files[0];
+                  if (file && user) {
+                    console.log('📷 Starting photo upload process...');
+                    console.log('File:', file.name, file.size, 'bytes');
+                    
+                    // IMMEDIATE: Show photo right away for great UX
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                      const imageUrl = event.target.result;
+                      const updatedUser = { ...user, avatar_url: imageUrl };
+                      setGlobalUser(updatedUser);
+                      console.log('📷 Photo updated immediately for good UX');
+                    };
+                    reader.readAsDataURL(file);
+                    
+                    // BACKGROUND: Attempt Firebase upload (non-blocking)
+                    updateState({ uploadingPhoto: true });
+                    
+                    try {
+                      console.log('📷 Attempting background upload to Firebase...');
+                      const { initializeFirebaseServices, getStorageService } = await import('./services/firebase');
+                      initializeFirebaseServices();
+                      const storageService = getStorageService();
+                      
+                      const userId = user.id || `user_${Date.now()}`;
+                      const uploadPath = `profile-photos/${userId}/${Date.now()}_${file.name}`;
+                      
+                      // Try upload with short timeout (don't make user wait)
+                      const uploadPromise = storageService.uploadImage(file, uploadPath);
+                      const timeoutPromise = new Promise((_, reject) => {
+                        setTimeout(() => reject(new Error('Background upload timeout')), 8000);
+                      });
+                      
+                      const result = await Promise.race([uploadPromise, timeoutPromise]);
+                      
+                      if (result.success) {
+                        // SUCCESS: Update to use Firebase URL 
+                        const updatedUser = { ...user, avatar_url: result.url };
+                        setGlobalUser(updatedUser);
+                        console.log('✅ Background upload successful:', result.url);
+                        updateState({ photoUploadMessage: 'Photo synced to cloud!' });
+                        setTimeout(() => updateState({ photoUploadMessage: null }), 2000);
+                      } else {
+                        throw new Error(result.error || 'Upload failed');
+                      }
+                    } catch (error) {
+                      // GRACEFUL FAILURE: User already has their photo, just log the issue
+                      console.log('📱 Using local photo (cloud sync failed):', error.message);
+                      updateState({ photoUploadMessage: 'Photo saved locally' });
+                      setTimeout(() => updateState({ photoUploadMessage: null }), 2000);
+                    } finally {
+                      updateState({ uploadingPhoto: false });
+                    }
+                  }
+                  // Reset input
+                  e.target.value = '';
                 }}
               />
               <h4 style={{ margin: '0 0 5px 0' }}>{user?.username}</h4>
-              <p style={{ color: '#666', margin: 0, fontSize: '14px' }}>{user?.email}</p>
+              <p style={{ color: '#666', margin: '0 0 5px 0', fontSize: '14px' }}>{user?.email}</p>
+              <p style={{ color: '#999', margin: '0 0 5px 0', fontSize: '11px', fontStyle: 'italic' }}>
+                {appState.uploadingPhoto ? '⏳ Uploading...' : 'Tap photo to change'}
+              </p>
+              
+              {/* Photo Upload Status */}
+              {appState.photoUploadMessage && (
+                <p style={{ 
+                  color: appState.photoUploadMessage.includes('failed') ? '#ef4444' : '#10b981', 
+                  margin: '0 0 10px 0', 
+                  fontSize: '12px', 
+                  fontWeight: '500',
+                  textAlign: 'center'
+                }}>
+                  {appState.photoUploadMessage}
+                </p>
+              )}
+              
+              {/* Bio Section */}
+              <div style={{ marginBottom: '15px' }}>
+                {appState.editingBio ? (
+                  <div style={{ textAlign: 'center' }}>
+                    <textarea
+                      value={appState.tempBio}
+                      onChange={(e) => updateState({ tempBio: e.target.value })}
+                      placeholder="Tell others about yourself... (e.g., 'Trusted seller with quick responses' or 'Careful buyer, always pays promptly')"
+                      style={{
+                        width: '100%',
+                        minHeight: '80px',
+                        padding: '8px',
+                        border: '1px solid #ddd',
+                        borderRadius: '8px',
+                        fontSize: '16px', // Prevent iOS zoom by using 16px or larger
+                        fontFamily: 'inherit',
+                        resize: 'vertical',
+                        boxSizing: 'border-box',
+                        WebkitAppearance: 'none',
+                        appearance: 'none',
+                        touchAction: 'manipulation',
+                        userSelect: 'text',
+                        WebkitUserSelect: 'text'
+                      }}
+                      maxLength={200}
+                    />
+                    <div style={{ display: 'flex', gap: '8px', marginTop: '8px', justifyContent: 'center' }}>
+                      <button
+                        onClick={() => {
+                          // Save bio - in real app this would sync to backend
+                          const updatedUser = { ...user, bio: appState.tempBio };
+                          setGlobalUser(updatedUser);
+                          updateState({ editingBio: false, tempBio: '' });
+                        }}
+                        style={{
+                          background: '#4CAF50',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '6px',
+                          padding: '6px 12px',
+                          fontSize: '12px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        Save
+                      </button>
+                      <button
+                        onClick={() => updateState({ editingBio: false, tempBio: '' })}
+                        style={{
+                          background: '#e0e0e0',
+                          color: '#666',
+                          border: 'none',
+                          borderRadius: '6px',
+                          padding: '6px 12px',
+                          fontSize: '12px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div 
+                    onClick={() => updateState({ editingBio: true, tempBio: user?.bio || '' })}
+                    style={{ 
+                      cursor: 'pointer',
+                      background: '#f8f9fa',
+                      padding: '10px',
+                      borderRadius: '8px',
+                      minHeight: '40px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      border: '1px dashed #ddd'
+                    }}
+                  >
+                    <p style={{ 
+                      color: user?.bio ? '#333' : '#999', 
+                      margin: 0, 
+                      fontSize: '12px', 
+                      textAlign: 'center',
+                      fontStyle: user?.bio ? 'normal' : 'italic'
+                    }}>
+                      {user?.bio || 'Add a bio to build trust with buyers and sellers • Click to edit'}
+                    </p>
+                  </div>
+                )}
+              </div>
             </div>
 
             {appState.currentMode === 'buyer' ? (
@@ -4990,6 +6777,377 @@ if (!appState.showAddItem) {
         />
       )}
       
+      {/* Saved Items Modal */}
+      {appState.showSavedItems && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0,0,0,0.8)',
+          zIndex: 1000,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '20px'
+        }}>
+          <div style={{
+            background: 'white',
+            borderRadius: '20px',
+            maxWidth: '500px',
+            width: '100%',
+            maxHeight: '80vh',
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column'
+          }}>
+            {/* Header */}
+            <div style={{
+              padding: '20px',
+              borderBottom: '1px solid #eee',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between'
+            }}>
+              <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 'bold' }}>
+                💾 Saved Items ({appState.savedItems.length}/{appState.maxDailySaves})
+              </h2>
+              <button
+                onClick={() => updateState({ showSavedItems: false })}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  fontSize: '24px',
+                  cursor: 'pointer',
+                  color: '#666'
+                }}
+              >
+                ×
+              </button>
+            </div>
+            
+            {/* Search Bar */}
+            <div style={{ padding: '15px 20px' }}>
+              <input
+                type="text"
+                placeholder="Search saved items..."
+                value={appState.savedItemsSearchQuery}
+                onChange={(e) => updateState({ savedItemsSearchQuery: e.target.value })}
+                style={{
+                  width: '100%',
+                  padding: '12px 15px',
+                  borderRadius: '10px',
+                  border: '1px solid #ddd',
+                  fontSize: '16px',
+                  outline: 'none'
+                }}
+              />
+            </div>
+            
+            {/* Saved Items List */}
+            <div style={{
+              flex: 1,
+              overflowY: 'auto',
+              padding: '0 20px 20px'
+            }}>
+              {appState.savedItems.length === 0 ? (
+                <div style={{
+                  textAlign: 'center',
+                  padding: '40px 20px',
+                  color: '#999'
+                }}>
+                  <p style={{ fontSize: '16px', marginBottom: '10px' }}>No saved items yet</p>
+                  <p style={{ fontSize: '14px' }}>Items you save will appear here for easy comparison</p>
+                </div>
+              ) : (
+                appState.savedItems
+                  .filter(item => {
+                    const query = appState.savedItemsSearchQuery.toLowerCase();
+                    return !query || 
+                      item.title.toLowerCase().includes(query) ||
+                      item.description.toLowerCase().includes(query) ||
+                      item.price.toString().includes(query);
+                  })
+                  .map((item, index) => (
+                    <div key={item.id} style={{
+                      display: 'flex',
+                      gap: '15px',
+                      padding: '15px',
+                      background: '#f9f9f9',
+                      borderRadius: '12px',
+                      marginBottom: '10px',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s ease'
+                    }}>
+                      <img
+                        src={item.image_url}
+                        alt={item.title}
+                        style={{
+                          width: '80px',
+                          height: '80px',
+                          objectFit: 'cover',
+                          borderRadius: '8px'
+                        }}
+                      />
+                      <div style={{ flex: 1 }}>
+                        <h3 style={{
+                          margin: '0 0 5px 0',
+                          fontSize: '16px',
+                          fontWeight: '600',
+                          color: '#333'
+                        }}>
+                          {item.title}
+                        </h3>
+                        <p style={{
+                          margin: '0 0 5px 0',
+                          fontSize: '18px',
+                          fontWeight: 'bold',
+                          color: '#4CAF50'
+                        }}>
+                          ${item.price}
+                        </p>
+                        <p style={{
+                          margin: 0,
+                          fontSize: '12px',
+                          color: '#999'
+                        }}>
+                          Saved {new Date(item.savedAt).toLocaleDateString()}
+                        </p>
+                      </div>
+                      <div style={{ 
+                        display: 'flex', 
+                        flexDirection: 'column', 
+                        gap: '8px',
+                        alignSelf: 'flex-start'
+                      }}>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            // Use proper interest flow instead of bypassing seller approval
+                            handleExpressInterest(item);
+                            updateState({ showSavedItems: false });
+                          }}
+                          style={{
+                            background: '#667eea',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '6px',
+                            padding: '6px 10px',
+                            fontSize: '11px',
+                            cursor: 'pointer',
+                            fontWeight: 'bold'
+                          }}
+                        >
+                          💝 Interest
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const newSavedItems = appState.savedItems.filter(i => i.id !== item.id);
+                            updateState({ savedItems: newSavedItems });
+                          }}
+                          style={{
+                            background: '#ff4444',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '6px',
+                            padding: '6px 10px',
+                            fontSize: '11px',
+                            cursor: 'pointer',
+                            fontWeight: 'bold'
+                          }}
+                        >
+                          🗑️ Remove
+                        </button>
+                      </div>
+                    </div>
+                  ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Daily Limit Modal */}
+      {appState.showLimitModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0,0,0,0.8)',
+          zIndex: 1001,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '20px'
+        }}>
+          <div style={{
+            background: 'white',
+            borderRadius: '20px',
+            padding: '30px',
+            maxWidth: '400px',
+            width: '100%',
+            textAlign: 'center'
+          }}>
+            <h2 style={{ marginBottom: '15px', color: '#ff9800' }}>
+              🚫 Daily Limit Reached
+            </h2>
+            <p style={{ marginBottom: '20px', color: '#666' }}>
+              {appState.limitModalType === 'saves' 
+                ? `You've reached your daily limit of ${appState.maxDailySaves} saves.`
+                : appState.limitModalType === 'swipes'
+                ? `You've reached your daily limit of ${appState.maxDailySwipes} swipes.`
+                : `You've reached your daily limit of ${appState.maxDailyLikes} likes.`
+              }
+              <br />
+              Come back tomorrow to continue!
+            </p>
+            <button
+              onClick={() => updateState({ showLimitModal: false, limitModalType: null })}
+              style={{
+                background: '#667eea',
+                color: 'white',
+                border: 'none',
+                borderRadius: '25px',
+                padding: '12px 30px',
+                fontSize: '16px',
+                fontWeight: 'bold',
+                cursor: 'pointer'
+              }}
+            >
+              Got it!
+            </button>
+          </div>
+        </div>
+      )}
+      
+      {/* Report Modal */}
+      {appState.showReportModal && appState.reportingItem && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0,0,0,0.8)',
+          zIndex: 1001,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '20px'
+        }}>
+          <div style={{
+            background: 'white',
+            borderRadius: '20px',
+            padding: '30px',
+            maxWidth: '400px',
+            width: '100%',
+            textAlign: 'center'
+          }}>
+            <div style={{ fontSize: '40px', marginBottom: '20px' }}>🚩</div>
+            <h2 style={{ color: '#ff5722', marginBottom: '15px', fontSize: '22px' }}>
+              Report Listing
+            </h2>
+            <p style={{ color: '#666', marginBottom: '25px', fontSize: '14px' }}>
+              Why are you reporting "{appState.reportingItem.title}"?
+            </p>
+            
+            <div style={{ textAlign: 'left', marginBottom: '25px' }}>
+              {[
+                'Fake/stolen photos',
+                'Spam/duplicate listing', 
+                'Inappropriate content',
+                'Suspected bot/scam',
+                'Wrong category/misleading',
+                'Other'
+              ].map((reason) => (
+                <label key={reason} style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  marginBottom: '12px',
+                  cursor: 'pointer',
+                  padding: '8px',
+                  borderRadius: '8px',
+                  background: appState.selectedReportReason === reason ? '#f3f4f6' : 'transparent'
+                }}>
+                  <input
+                    type="radio"
+                    name="reportReason"
+                    value={reason}
+                    checked={appState.selectedReportReason === reason}
+                    onChange={(e) => updateState({ selectedReportReason: e.target.value })}
+                    style={{ marginRight: '12px', transform: 'scale(1.2)' }}
+                  />
+                  <span style={{ fontSize: '14px' }}>{reason}</span>
+                </label>
+              ))}
+            </div>
+            
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button
+                onClick={() => updateState({ 
+                  showReportModal: false, 
+                  reportingItem: null, 
+                  selectedReportReason: '' 
+                })}
+                style={{
+                  flex: 1,
+                  background: '#e0e0e0',
+                  color: '#666',
+                  border: 'none',
+                  borderRadius: '25px',
+                  padding: '12px 20px',
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer'
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (!appState.selectedReportReason) {
+                    alert('Please select a reason for reporting.');
+                    return;
+                  }
+                  
+                  const newReportedItems = new Set(appState.reportedItems);
+                  newReportedItems.add(appState.reportingItem.id);
+                  
+                  updateState({
+                    reportedItems: newReportedItems,
+                    userReportCount: appState.userReportCount + 1,
+                    showReportModal: false,
+                    reportingItem: null,
+                    selectedReportReason: ''
+                  });
+                  
+                  console.log(`🚨 Reported item: ${appState.reportingItem.title} for: ${appState.selectedReportReason}`);
+                  alert('Thank you for your report. We will review this item.');
+                }}
+                disabled={!appState.selectedReportReason}
+                style={{
+                  flex: 1,
+                  background: appState.selectedReportReason ? '#ff5722' : '#ccc',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '25px',
+                  padding: '12px 20px',
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  cursor: appState.selectedReportReason ? 'pointer' : 'not-allowed'
+                }}
+              >
+                Submit Report
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      
       {/* Bottom Navigation - Always visible when authenticated */}
       <BottomNavigation 
         currentView={appState.currentView}
@@ -5004,9 +7162,50 @@ if (!appState.showAddItem) {
         }}
         onModeChange={(mode) => {
           console.log('Changing mode to:', mode);
-          updateState({ currentMode: mode });
+          
+          // Show swipe tutorial when entering buy mode for the first time
+          if (mode === 'buyer' && !appState.hasSeenBuyModeTutorial) {
+            updateState({ currentMode: mode, showSwipeTutorial: true });
+          } else {
+            updateState({ currentMode: mode });
+          }
         }}
+        onShowTutorial={showSwipeTutorial}
       />
+      
+      {/* Animation Components */}
+      <SwipeFeedback type={showSwipeFeedback} show={showSwipeFeedback !== null} />
+      {/* No match animation - this is a marketplace, not a dating app! */}
+      
+      {/* Mobile Controls - Admin Access - Hide when profile is open or add item form is open */}
+      {!appState.showProfile && !appState.showAddItem && (
+        <div style={{
+          position: 'fixed',
+          top: /android/i.test(navigator.userAgent) || window.Capacitor?.getPlatform?.() === 'android'
+            ? '30px' // Lower on Android to avoid status bar overlap
+            : '10px', // Original iOS position
+          right: '10px',
+          zIndex: 9999,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '8px'
+        }}>
+          {/* Admin Dashboard Access for Mobile */}
+          <div style={{
+            background: '#ff9800',
+            color: 'white',
+            padding: '8px 12px',
+            borderRadius: '20px',
+            fontSize: '12px',
+            cursor: 'pointer',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+            textAlign: 'center'
+          }}
+          onClick={() => updateState({ showAdminDashboard: !appState.showAdminDashboard })}>
+            📊 Admin
+          </div>
+        </div>
+      )}
     </>
   );
 };

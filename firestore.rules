@@ -1,72 +1,49 @@
 rules_version = '2';
+
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Helper functions
-    function isAuthenticated() {
-      return request.auth != null;
-    }
-    
-    function isOwner(userId) {
-      return request.auth.uid == userId;
-    }
-    
-    function hasOnboardingComplete() {
-      return resource.data.onboardingComplete == true;
-    }
-    
-    // Users collection - users can read/write their own data
+    // Users can read/write their own user document
     match /users/{userId} {
-      allow read, write: if isAuthenticated() && isOwner(userId);
-      allow read: if isAuthenticated(); // Allow reading other users for chat/item display
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read: if request.auth != null; // Allow reading other users for marketplace
     }
     
-    // Items collection
+    // Items/Listings - users can create/update their own, everyone can read active items
     match /items/{itemId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() 
-        && isOwner(resource.data.seller_id)
-        && hasOnboardingComplete();
-      allow update: if isAuthenticated() 
-        && isOwner(resource.data.seller_id);
-      allow delete: if isAuthenticated() 
-        && isOwner(resource.data.seller_id);
+      allow read: if request.auth != null && resource.data.status == 'active';
+      allow create: if request.auth != null && 
+                    request.auth.uid == resource.data.seller_id;
+      allow update: if request.auth != null && 
+                    request.auth.uid == resource.data.seller_id;
+      allow delete: if request.auth != null && 
+                    request.auth.uid == resource.data.seller_id;
     }
     
-    // Chats collection
-    match /chats/{chatId} {
-      allow read: if isAuthenticated() 
-        && request.auth.uid in resource.data.participants;
-      allow create: if isAuthenticated() 
-        && request.auth.uid in resource.data.participants;
-      allow update: if isAuthenticated() 
-        && request.auth.uid in resource.data.participants;
-      // No delete - preserve chat history
+    // Interests/Matches - users can create interests and read their own
+    match /interests/{interestId} {
+      allow read: if request.auth != null && 
+                  (request.auth.uid == resource.data.buyer_id || 
+                   request.auth.uid == resource.data.seller_id);
+      allow create: if request.auth != null && 
+                    request.auth.uid == resource.data.buyer_id;
     }
     
-    // Reports collection - users can only create reports
+    // Reports - users can create reports, admins can read
     match /reports/{reportId} {
-      allow create: if isAuthenticated() 
-        && isOwner(resource.data.userId);
-      // Only admins can read reports (handled by backend functions)
+      allow create: if request.auth != null && 
+                    request.auth.uid == resource.data.reporter_id;
+      // Admin read access would be handled separately
     }
     
-    // Push tokens collection (for notifications)
-    match /pushTokens/{tokenId} {
-      allow read, write: if isAuthenticated() 
-        && isOwner(resource.data.userId);
+    // Chat messages - users can read/write messages they're part of
+    match /chats/{chatId} {
+      allow read, write: if request.auth != null && 
+                         request.auth.uid in resource.data.participants;
     }
     
-    // User interactions (likes, passes, etc.)
-    match /interactions/{interactionId} {
-      allow read, write: if isAuthenticated() 
-        && isOwner(resource.data.userId);
-    }
-    
-    // Analytics collection (optional - for app insights)
-    match /analytics/{eventId} {
-      allow create: if isAuthenticated() 
-        && isOwner(resource.data.userId);
-      // Only backend can read analytics
+    match /chats/{chatId}/messages/{messageId} {
+      allow read, create: if request.auth != null && 
+                          request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants;
     }
   }
 }

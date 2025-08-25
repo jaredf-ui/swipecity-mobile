@@ -17,6 +17,15 @@ export class StorageService {
     this.storage = storage;
   }
 
+  // Generic file upload method
+  async uploadFile(
+    file: File | Blob, 
+    path: string, 
+    onProgress?: (progress: number) => void
+  ): Promise<ApiResponse<string>> {
+    return this.uploadImage(file, path, onProgress);
+  }
+
   // Upload image file
   async uploadImage(
     file: File | Blob, 

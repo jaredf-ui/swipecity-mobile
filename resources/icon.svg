@@ -1,0 +1,34 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <!-- Solid blue background -->
+  <rect width="1024" height="1024" fill="#2563eb" rx="180"/>
+  
+  <!-- Large white SC letters -->
+  <!-- S letter -->
+  <path d="M 200 450 
+           Q 200 350 300 350 
+           L 400 350 
+           Q 500 350 500 450 
+           Q 500 500 450 500 
+           L 350 500 
+           Q 300 500 300 550 
+           Q 300 650 400 650 
+           L 500 650" 
+        fill="none" stroke="white" stroke-width="60" stroke-linecap="round"/>
+  
+  <!-- C letter -->
+  <path d="M 800 400
+           Q 800 350 750 350
+           L 600 350  
+           Q 550 350 550 400
+           L 550 600
+           Q 550 650 600 650
+           L 750 650
+           Q 800 650 800 600" 
+        fill="none" stroke="white" stroke-width="60" stroke-linecap="round"/>
+  
+  <!-- Swipe arrow -->
+  <g transform="translate(512, 800)">
+    <path d="M -150 0 L 150 0" stroke="white" stroke-width="40" stroke-linecap="round"/>
+    <path d="M 120 -25 L 150 0 L 120 25" fill="none" stroke="white" stroke-width="40" stroke-linecap="round"/>
+  </g>
+</svg>

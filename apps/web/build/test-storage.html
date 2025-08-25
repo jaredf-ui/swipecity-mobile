@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SwipeCity LocalStorage Debug</title>
+</head>
+<body>
+    <h1>SwipeCity LocalStorage Contents</h1>
+    <div id="output"></div>
+    
+    <script>
+        function displayStorageData() {
+            const output = document.getElementById('output');
+            
+            try {
+                const seededItems = localStorage.getItem('swipecity_seeded_items');
+                const seededUsers = localStorage.getItem('swipecity_seeded_users');
+                const seededInterests = localStorage.getItem('swipecity_seeded_interests');
+                
+                output.innerHTML = '<h2>Seeded Items:</h2>';
+                if (seededItems) {
+                    const items = JSON.parse(seededItems);
+                    output.innerHTML += `<p>Found ${items.length} seeded items</p>`;
+                    
+                    // Show first few items with their seller info
+                    items.slice(0, 3).forEach((item, i) => {
+                        output.innerHTML += `
+                            <div style="border: 1px solid #ccc; padding: 10px; margin: 10px 0;">
+                                <h3>${item.title} - $${item.price}</h3>
+                                <p><strong>Seller Name:</strong> ${item.seller_name || 'MISSING'}</p>
+                                <p><strong>Seller Rating:</strong> ${item.seller_rating || 'MISSING'}</p>
+                                <p><strong>Seller Reviews:</strong> ${item.seller_reviews || 'MISSING'}</p>
+                                <p><strong>Distance:</strong> ${item.distance || 'MISSING'}</p>
+                                <p><strong>Verified:</strong> ${item.verified || 'MISSING'}</p>
+                                <p><strong>Category:</strong> ${item.category}</p>
+                                <p><strong>Condition:</strong> ${item.condition}</p>
+                                <p><strong>All Fields:</strong></p>
+                                <pre>${JSON.stringify(item, null, 2)}</pre>
+                            </div>
+                        `;
+                    });
+                } else {
+                    output.innerHTML += '<p>No seeded items found in localStorage</p>';
+                }
+                
+                output.innerHTML += '<h2>Seeded Users:</h2>';
+                if (seededUsers) {
+                    const users = JSON.parse(seededUsers);
+                    output.innerHTML += `<p>Found ${users.length} seeded users</p>`;
+                } else {
+                    output.innerHTML += '<p>No seeded users found in localStorage</p>';
+                }
+                
+            } catch (error) {
+                output.innerHTML += `<p style="color: red;">Error: ${error.message}</p>`;
+            }
+        }
+        
+        // Display data on page load
+        displayStorageData();
+        
+        // Add refresh button
+        document.body.innerHTML += '<button onclick="displayStorageData()" style="margin: 20px 0;">Refresh Data</button>';
+    </script>
+</body>
+</html>
