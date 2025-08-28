@@ -658,11 +658,13 @@ const ErrorScreen = ({ authError }) => (
 );
 
 const SwipeMarketplace = () => {
-  // Environment detection for development features
-  const isDevelopment = process.env.NODE_ENV === 'development' || 
+  // Environment detection for development features - STRICT production mode
+  const isDevelopment = process.env.NODE_ENV === 'development' && (
                        window.location.hostname === 'localhost' ||
                        window.location.hostname === '127.0.0.1' ||
-                       window.location.protocol === 'file:';
+                       window.location.protocol === 'http:' ||
+                       window.location.search.includes('dev=true')
+                     );
 
   const { 
     user, 
@@ -779,6 +781,7 @@ const SwipeMarketplace = () => {
     selectedReportReason: '',
     editingBio: false,
     tempBio: '',
+    savedBio: '',
     userListings: [
       // Example listing to show interests
       {
@@ -1114,15 +1117,60 @@ const SwipeMarketplace = () => {
     // Use seeded items if available, otherwise fall back to mockItems
     const sourceItems = seededItems.length > 0 ? seededItems : mockItems;
     
+    // Load learned swipe preferences
+    let swipeData = {};
+    if (user?.uid) {
+      try {
+        const swipeDataKey = `swipecity_swipe_learning_${user.uid}`;
+        const existing = localStorage.getItem(swipeDataKey);
+        swipeData = existing ? JSON.parse(existing) : {};
+      } catch (e) {
+        console.log('Error loading swipe data:', e);
+      }
+    }
+    
     return sourceItems
-      .map(item => ({
-        ...item,
-        algorithmScore: user?.preferences?.categories?.includes(categories.indexOf(item.category)) 
-          ? (item.algorithmScore || 0.8) // Default score for seeded items
-          : (item.algorithmScore || 0.8) * 0.3
-      }))
+      .map(item => {
+        // Get the category index for this item
+        const itemCategoryIndex = categories.indexOf(item.category);
+        
+        // Check if user has this category in their initial preferences
+        const isPreferredCategory = user?.preferences?.categories?.includes(itemCategoryIndex);
+        
+        // Calculate learned preference score from swipe behavior
+        let learnedScore = 0.5; // Neutral starting point
+        const categorySwipeData = swipeData[itemCategoryIndex];
+        if (categorySwipeData && categorySwipeData.total >= 5) {
+          // Only use learned data after at least 5 swipes in this category
+          const likeRatio = categorySwipeData.likes / categorySwipeData.total;
+          learnedScore = likeRatio; // 0.0 to 1.0 based on actual swipe behavior
+          console.log(`🤖 Using learned preference for ${item.category}: ${Math.round(likeRatio * 100)}% like rate`);
+        }
+        
+        // Combine initial preferences with learned behavior
+        let finalScore = item.algorithmScore || 0.8;
+        
+        if (isPreferredCategory) {
+          // User selected this category initially - boost score
+          finalScore *= 1.0;
+        } else {
+          // User didn't select this category initially - reduce score
+          finalScore *= 0.3;
+        }
+        
+        // Apply learned behavior (weighted more heavily as user swipes more)
+        const learnedWeight = categorySwipeData ? Math.min(categorySwipeData.total / 20, 0.7) : 0;
+        const initialWeight = 1 - learnedWeight;
+        
+        finalScore = (finalScore * initialWeight) + (learnedScore * 0.8 * learnedWeight);
+        
+        return {
+          ...item,
+          algorithmScore: finalScore
+        };
+      })
       .sort((a, b) => (b.algorithmScore || 0) - (a.algorithmScore || 0));
-  }, [user?.preferences?.categories, seededItems]);
+  }, [user?.preferences?.categories, user?.uid, seededItems]);
   const currentItem = items[appState.currentItemIndex] || null;
 
   const updateState = useCallback((updates) => {
@@ -1608,12 +1656,54 @@ const closeInterestConfirmation = useCallback(() => {
 
 const handleSwipe = useCallback((direction) => {
     console.log('➡️ Swiping:', direction);
+    console.log('🔍 DEBUG: Current item index:', appState.currentItemIndex);
+    console.log('🔍 DEBUG: Items length:', items.length);
+    console.log('🔍 DEBUG: User UID:', user?.uid);
     
     // Check daily swipe limit before processing swipe
     if (appState.dailySwipeCount >= appState.maxDailySwipes) {
       console.log('🚫 Daily swipe limit reached');
       updateState({ showLimitModal: true, limitModalType: 'swipes' });
       return;
+    }
+    
+    // LEARNING: Track swipe preferences for algorithm improvement
+    const currentItem = items[appState.currentItemIndex];
+    if (currentItem && user?.uid) {
+      const categoryIndex = categories.indexOf(currentItem.category);
+      
+      // Get existing swipe data from localStorage
+      const swipeDataKey = `swipecity_swipe_learning_${user.uid}`;
+      let swipeData = {};
+      try {
+        const existing = localStorage.getItem(swipeDataKey);
+        swipeData = existing ? JSON.parse(existing) : {};
+      } catch (e) {
+        console.log('Error parsing swipe data:', e);
+        swipeData = {};
+      }
+      
+      // Initialize category data if not exists
+      if (!swipeData[categoryIndex]) {
+        swipeData[categoryIndex] = { likes: 0, passes: 0, total: 0 };
+      }
+      
+      // Update swipe counts
+      swipeData[categoryIndex].total += 1;
+      if (direction === 'right') {
+        swipeData[categoryIndex].likes += 1;
+        console.log(`🤖 Learning: User likes ${currentItem.category} (${swipeData[categoryIndex].likes}/${swipeData[categoryIndex].total})`);
+      } else {
+        swipeData[categoryIndex].passes += 1;
+        console.log(`🤖 Learning: User passed on ${currentItem.category} (${swipeData[categoryIndex].passes}/${swipeData[categoryIndex].total})`);
+      }
+      
+      // Save updated swipe data
+      try {
+        localStorage.setItem(swipeDataKey, JSON.stringify(swipeData));
+      } catch (e) {
+        console.error('Error saving swipe data:', e);
+      }
     }
     
     // Show animation feedback
@@ -1634,7 +1724,7 @@ const handleSwipe = useCallback((direction) => {
     });
     
     console.log(`✅ Swipe ${direction} recorded (${appState.dailySwipeCount + 1}/${appState.maxDailySwipes} today)`);
-}, [appState.currentItemIndex, appState.dailySwipeCount, appState.maxDailySwipes, items.length, currentItem, updateState]);  const handleUndo = useCallback(() => {
+}, [appState.currentItemIndex, appState.dailySwipeCount, appState.maxDailySwipes, items, currentItem, updateState, user]);  const handleUndo = useCallback(() => {
     if (appState.canUndo && appState.lastPassedItem) {
       // Go back to the passed item
       const lastItemIndex = items.findIndex(item => item.id === appState.lastPassedItem.id);
@@ -4176,28 +4266,6 @@ if (!appState.showAddItem) {
                 </label>
               </div>
 
-              {/* Debug: Reset Tutorial Button */}
-              <div style={{ marginBottom: '15px' }}>
-                <button
-                  onClick={() => {
-                    resetTutorial();
-                    updateState({ showSettings: false });
-                  }}
-                  style={{
-                    width: '100%',
-                    background: '#ff9800',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '12px',
-                    padding: '10px',
-                    fontSize: '14px',
-                    fontWeight: 'bold',
-                    cursor: 'pointer'
-                  }}
-                >
-                  🔄 Reset Tutorial (for testing)
-                </button>
-              </div>
               </div>
 
               {/* Fixed Action Buttons Area */}
@@ -5914,37 +5982,23 @@ if (!appState.showAddItem) {
                       />
                       <div style={{ display: 'flex', gap: '8px', marginTop: '8px', justifyContent: 'center' }}>
                         <button
-                          onClick={() => {
-                            // Save bio - in real app this would sync to backend
-                            const updatedUser = { ...user, bio: appState.tempBio };
-                            setGlobalUser(updatedUser);
-                            updateState({ editingBio: false, tempBio: '' });
-                          }}
+                          onClick={() => updateState({ 
+                            editingBio: false, 
+                            tempBio: '', 
+                            savedBio: appState.tempBio  // Auto-save when closing 
+                          })}
                           style={{
                             background: '#4CAF50',
                             color: 'white',
                             border: 'none',
                             borderRadius: '6px',
-                            padding: '6px 12px',
-                            fontSize: '12px',
-                            cursor: 'pointer'
+                            padding: '8px 16px',
+                            fontSize: '14px',
+                            cursor: 'pointer',
+                            fontWeight: 'bold'
                           }}
                         >
-                          Save
-                        </button>
-                        <button
-                          onClick={() => updateState({ editingBio: false, tempBio: '' })}
-                          style={{
-                            background: '#e0e0e0',
-                            color: '#666',
-                            border: 'none',
-                            borderRadius: '6px',
-                            padding: '6px 12px',
-                            fontSize: '12px',
-                            cursor: 'pointer'
-                          }}
-                        >
-                          Cancel
+                          ✅ Save & Close
                         </button>
                       </div>
                     </div>
@@ -5964,13 +6018,13 @@ if (!appState.showAddItem) {
                       }}
                     >
                       <p style={{ 
-                        color: user?.bio ? '#333' : '#999', 
+                        color: (user?.bio || appState.savedBio) ? '#333' : '#999', 
                         margin: 0, 
                         fontSize: '12px', 
                         textAlign: 'center',
-                        fontStyle: user?.bio ? 'normal' : 'italic'
+                        fontStyle: (user?.bio || appState.savedBio) ? 'normal' : 'italic'
                       }}>
-                        {user?.bio || 'Add a bio to build trust with buyers and sellers • Click to edit'}
+                        {user?.bio || appState.savedBio || 'Add a bio to build trust with buyers and sellers • Click to edit'}
                       </p>
                     </div>
                   )}
@@ -6590,36 +6644,34 @@ if (!appState.showAddItem) {
                     <div style={{ display: 'flex', gap: '8px', marginTop: '8px', justifyContent: 'center' }}>
                       <button
                         onClick={() => {
-                          // Save bio - in real app this would sync to backend
-                          const updatedUser = { ...user, bio: appState.tempBio };
-                          setGlobalUser(updatedUser);
-                          updateState({ editingBio: false, tempBio: '' });
+                          // Save bio to localStorage (like profile photo)
+                          const currentUser = JSON.parse(localStorage.getItem('swipecity_mock_user') || '{}');
+                          const updatedUser = { ...currentUser, bio: appState.tempBio };
+                          localStorage.setItem('swipecity_mock_user', JSON.stringify(updatedUser));
+                          
+                          // Also update user state immediately
+                          setUser(updatedUser);
+                          setUserProfile(updatedUser);
+                          
+                          // Close bio editor
+                          updateState({ 
+                            editingBio: false, 
+                            tempBio: '', 
+                            savedBio: appState.tempBio 
+                          });
                         }}
                         style={{
                           background: '#4CAF50',
                           color: 'white',
                           border: 'none',
                           borderRadius: '6px',
-                          padding: '6px 12px',
-                          fontSize: '12px',
-                          cursor: 'pointer'
+                          padding: '8px 16px',
+                          fontSize: '14px',
+                          cursor: 'pointer',
+                          fontWeight: 'bold'
                         }}
                       >
-                        Save
-                      </button>
-                      <button
-                        onClick={() => updateState({ editingBio: false, tempBio: '' })}
-                        style={{
-                          background: '#e0e0e0',
-                          color: '#666',
-                          border: 'none',
-                          borderRadius: '6px',
-                          padding: '6px 12px',
-                          fontSize: '12px',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        Cancel
+                        ✅ Save & Close
                       </button>
                     </div>
                   </div>
@@ -7311,7 +7363,7 @@ if (!appState.showAddItem) {
               </button>
             </div>
             <div style={{ fontSize: '14px', lineHeight: '1.5', color: '#333' }}>
-              <p><strong>Last Updated:</strong> December 2024</p>
+              <p><strong>Last Updated:</strong> August 2025</p>
               
               <h3>Introduction</h3>
               <p>SwipeCity respects your privacy and is committed to protecting your personal information. This Privacy Policy explains how we collect, use, and protect your information when you use the SwipeCity mobile application.</p>
@@ -7381,7 +7433,7 @@ if (!appState.showAddItem) {
               </button>
             </div>
             <div style={{ fontSize: '14px', lineHeight: '1.5', color: '#333' }}>
-              <p><strong>Last Updated:</strong> December 2024</p>
+              <p><strong>Last Updated:</strong> August 2025</p>
               
               <h3>Agreement to Terms</h3>
               <p>By accessing or using the SwipeCity mobile application, you agree to be bound by these Terms of Service and our Privacy Policy.</p>

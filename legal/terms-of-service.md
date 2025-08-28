@@ -1,6 +1,6 @@
 # Terms of Service for SwipeCity
 
-**Last Updated: December 2024**
+**Last Updated: August 2025**
 
 ## Agreement to Terms
 
