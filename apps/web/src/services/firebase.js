@@ -39,19 +39,28 @@ class AuthService {
   // Register new user with email and password
   async registerWithEmailPassword(email, password, displayName) {
     try {
+      console.log('🔥 Starting Firebase registration for:', email);
+      
       // Create auth user
+      console.log('👤 Creating Firebase auth user...');
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      console.log('✅ Firebase auth user created:', userCredential.user.uid);
       const user = userCredential.user;
       
       // Update display name
       if (displayName) {
+        console.log('📝 Updating display name...');
         await updateProfile(user, { displayName });
+        console.log('✅ Display name updated');
       }
       
       // Send email verification
+      console.log('📧 Sending email verification...');
       await sendEmailVerification(user);
+      console.log('✅ Email verification sent');
       
       // Create user profile in Firestore
+      console.log('💾 Creating Firestore profile...');
       const userProfile = {
         uid: user.uid,
         email: user.email,
@@ -72,7 +81,9 @@ class AuthService {
       };
       
       await setDoc(doc(db, 'users', user.uid), userProfile);
+      console.log('✅ Firestore profile created successfully');
       
+      console.log('🎉 Registration completed successfully');
       return { success: true, user, profile: userProfile };
     } catch (error) {
       console.error('Registration error:', error);
@@ -150,7 +161,19 @@ class AuthService {
       provider.addScope('email');
       provider.addScope('profile');
       
-      const result = await signInWithPopup(auth, provider);
+      // Detect if we're in a mobile app environment
+      const isMobile = window.Capacitor && window.Capacitor.isNativePlatform();
+      
+      let result;
+      if (isMobile) {
+        // For mobile apps, we need to use a different approach
+        // For now, return a helpful error message
+        throw new Error('mobile-auth-required');
+      } else {
+        // For web, use popup
+        result = await signInWithPopup(auth, provider);
+      }
+      
       const user = result.user;
       
       // Check if user profile exists
@@ -190,6 +213,8 @@ class AuthService {
         errorMessage = 'Please allow popups for this site and try again.';
       } else if (error.code === 'auth/popup-closed-by-user') {
         errorMessage = 'Sign in was cancelled.';
+      } else if (error.message === 'mobile-auth-required') {
+        errorMessage = 'Google sign-in requires additional setup for mobile apps. Please use email/password for now.';
       }
       
       return { success: false, error: errorMessage };

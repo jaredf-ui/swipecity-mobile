@@ -783,100 +783,10 @@ const SwipeMarketplace = () => {
     tempBio: '',
     savedBio: '',
     userListings: [
-      // Example listing to show interests
-      {
-        id: '1',
-        title: 'Nike Air Jordans',
-        price: 250,
-        description: 'Barely worn, size 10.5. Original box included.',
-        condition: 'like-new',
-        images: [{url: 'https://images.unsplash.com/photo-1556906781-9a412961c28c?w=400&h=400&fit=crop'}],
-        created_at: Date.now() - 86400000, // 1 day ago
-        updated_at: Date.now() - 86400000,
-        status: 'active',
-        seller_id: 'seller1'
-      }
+      // User's real listings will be added here when they create them
     ],
     buyerInterests: [
-      // Example interests for demo - Added more for testing scrolling
-      {
-        id: 'interest_demo_1',
-        itemId: '1', // Nike Air Jordans
-        buyerId: 'buyer_1',
-        buyerName: 'Alex Chen',
-        buyerAvatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&h=150&fit=crop&crop=face',
-        itemTitle: 'Nike Air Jordans',
-        itemImage: 'https://images.unsplash.com/photo-1556906781-9a412961c28c?w=400&h=400&fit=crop',
-        sellerName: 'Mike Chen',
-        sellerId: 'seller1',
-        timestamp: Date.now() - 3600000, // 1 hour ago
-        status: 'pending'
-      },
-      {
-        id: 'interest_demo_2',
-        itemId: '1', // Nike Air Jordans
-        buyerId: 'buyer_2', 
-        buyerName: 'Sarah Wilson',
-        buyerAvatar: 'https://images.unsplash.com/photo-1494790108755-2616b612b786?w=150&h=150&fit=crop&crop=face',
-        itemTitle: 'Nike Air Jordans',
-        itemImage: 'https://images.unsplash.com/photo-1556906781-9a412961c28c?w=400&h=400&fit=crop',
-        sellerName: 'Mike Chen',
-        sellerId: 'seller1',
-        timestamp: Date.now() - 7200000, // 2 hours ago
-        status: 'pending'
-      },
-      {
-        id: 'interest_demo_3',
-        itemId: '1', // Nike Air Jordans
-        buyerId: 'buyer_3',
-        buyerName: 'David Kim',
-        buyerAvatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&h=150&fit=crop&crop=face',
-        itemTitle: 'Nike Air Jordans',
-        itemImage: 'https://images.unsplash.com/photo-1556906781-9a412961c28c?w=400&h=400&fit=crop',
-        sellerName: 'Mike Chen',
-        sellerId: 'seller1',
-        timestamp: Date.now() - 10800000, // 3 hours ago
-        status: 'pending'
-      },
-      {
-        id: 'interest_demo_4',
-        itemId: '1', // Nike Air Jordans
-        buyerId: 'buyer_4',
-        buyerName: 'Emily Rodriguez',
-        buyerAvatar: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=150&h=150&fit=crop&crop=face',
-        itemTitle: 'Nike Air Jordans',
-        itemImage: 'https://images.unsplash.com/photo-1556906781-9a412961c28c?w=400&h=400&fit=crop',
-        sellerName: 'Mike Chen',
-        sellerId: 'seller1',
-        timestamp: Date.now() - 14400000, // 4 hours ago
-        status: 'pending'
-      },
-      {
-        id: 'interest_demo_5',
-        itemId: '1', // Nike Air Jordans
-        buyerId: 'buyer_5',
-        buyerName: 'Marcus Johnson',
-        buyerAvatar: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=face',
-        itemTitle: 'Nike Air Jordans',
-        itemImage: 'https://images.unsplash.com/photo-1556906781-9a412961c28c?w=400&h=400&fit=crop',
-        sellerName: 'Mike Chen',
-        sellerId: 'seller1',
-        timestamp: Date.now() - 18000000, // 5 hours ago
-        status: 'pending'
-      },
-      {
-        id: 'interest_demo_6',
-        itemId: '1', // Nike Air Jordans
-        buyerId: 'buyer_6',
-        buyerName: 'Jessica Taylor',
-        buyerAvatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&h=150&fit=crop&crop=face',
-        itemTitle: 'Nike Air Jordans',
-        itemImage: 'https://images.unsplash.com/photo-1556906781-9a412961c28c?w=400&h=400&fit=crop',
-        sellerName: 'Mike Chen',
-        sellerId: 'seller1',
-        timestamp: Date.now() - 21600000, // 6 hours ago
-        status: 'pending'
-      }
+      // Real buyer interests will be added here when users express interest
     ], // { itemId, buyerId, buyerName, buyerAvatar, timestamp }
     showInterestConfirmation: false,
     interestedItem: null,
@@ -5982,11 +5892,35 @@ if (!appState.showAddItem) {
                       />
                       <div style={{ display: 'flex', gap: '8px', marginTop: '8px', justifyContent: 'center' }}>
                         <button
-                          onClick={() => updateState({ 
-                            editingBio: false, 
-                            tempBio: '', 
-                            savedBio: appState.tempBio  // Auto-save when closing 
-                          })}
+                          onClick={() => {
+                            // Save bio to localStorage (preserve onboarding status)
+                            const currentUser = JSON.parse(localStorage.getItem('swipecity_demo_user') || '{}');
+                            const updatedUser = { 
+                              ...currentUser, 
+                              bio: appState.tempBio,
+                              // Force onboarding complete to prevent going back to onboarding
+                              onboardingComplete: true
+                            };
+                            localStorage.setItem('swipecity_demo_user', JSON.stringify(updatedUser));
+                            // Also save to user-specific key for persistence across logins
+                            const userKey = `swipecity_user_${updatedUser.email.replace(/[@+.]/g, '_')}`;
+                            localStorage.setItem(userKey, JSON.stringify(updatedUser));
+                            
+                            console.log('📝 Bio update - setting user with onboardingComplete:', updatedUser.onboardingComplete);
+                            
+                            // Also update user state immediately (both auth context and global)
+                            setUser(updatedUser);
+                            setUserProfile(updatedUser);
+                            setGlobalUser(updatedUser);
+                            
+                            // Close bio editor and reset onboarding step
+                            updateState({ 
+                              editingBio: false, 
+                              tempBio: '', 
+                              savedBio: appState.tempBio,
+                              onboardingStep: 1 // Reset to prevent onboarding loop
+                            });
+                          }}
                           style={{
                             background: '#4CAF50',
                             color: 'white',
@@ -6143,7 +6077,18 @@ if (!appState.showAddItem) {
               )}
 
               <button
-                onClick={signOut}
+                onClick={async () => {
+                  await signOut();
+                  // Also reset global app state
+                  setGlobalUser(null);
+                  // Reset app state including onboarding step
+                  updateState({ 
+                    onboardingStep: 1,
+                    editingBio: false,
+                    tempBio: '',
+                    savedBio: ''
+                  });
+                }}
                 style={{
                   width: '100%',
                   background: '#ff4444',
@@ -6540,14 +6485,26 @@ if (!appState.showAddItem) {
                       const imageUrl = event.target.result;
                       console.log('📷 Photo loaded, updating user profile...');
                       
-                      // Update the current user profile with the new photo
-                      const currentUser = JSON.parse(localStorage.getItem('swipecity_mock_user') || '{}');
-                      const updatedUser = { ...currentUser, photoURL: imageUrl };
-                      localStorage.setItem('swipecity_mock_user', JSON.stringify(updatedUser));
+                      // Update the current user profile with the new photo (preserve onboarding status)
+                      const currentUser = JSON.parse(localStorage.getItem('swipecity_demo_user') || '{}');
+                      const updatedUser = { 
+                        ...currentUser, 
+                        photoURL: imageUrl,
+                        // Force onboarding complete to prevent going back to onboarding
+                        onboardingComplete: true
+                      };
+                      localStorage.setItem('swipecity_demo_user', JSON.stringify(updatedUser));
                       
-                      // Update state immediately for both user and userProfile
+                      // Also save to user-specific key for persistence across logins
+                      const userKey = `swipecity_user_${updatedUser.email.replace(/[@+.]/g, '_')}`;
+                      localStorage.setItem(userKey, JSON.stringify(updatedUser));
+                      
+                      console.log('📷 Photo update - setting user with onboardingComplete:', updatedUser.onboardingComplete);
+                      
+                      // Update state immediately for both auth context and global
                       setUser(updatedUser);
                       setUserProfile(updatedUser);
+                      setGlobalUser(updatedUser);
                       
                       console.log('📷 Photo updated successfully');
                     };
@@ -6644,20 +6601,32 @@ if (!appState.showAddItem) {
                     <div style={{ display: 'flex', gap: '8px', marginTop: '8px', justifyContent: 'center' }}>
                       <button
                         onClick={() => {
-                          // Save bio to localStorage (like profile photo)
-                          const currentUser = JSON.parse(localStorage.getItem('swipecity_mock_user') || '{}');
-                          const updatedUser = { ...currentUser, bio: appState.tempBio };
-                          localStorage.setItem('swipecity_mock_user', JSON.stringify(updatedUser));
+                          // Save bio to localStorage (preserve onboarding status)
+                          const currentUser = JSON.parse(localStorage.getItem('swipecity_demo_user') || '{}');
+                          const updatedUser = { 
+                            ...currentUser, 
+                            bio: appState.tempBio,
+                            // Force onboarding complete to prevent going back to onboarding
+                            onboardingComplete: true
+                          };
+                          localStorage.setItem('swipecity_demo_user', JSON.stringify(updatedUser));
+                          // Also save to user-specific key for persistence across logins
+                          const userKey = `swipecity_user_${updatedUser.email.replace(/[@+.]/g, '_')}`;
+                          localStorage.setItem(userKey, JSON.stringify(updatedUser));
                           
-                          // Also update user state immediately
+                          console.log('📝 Bio update (2nd) - setting user with onboardingComplete:', updatedUser.onboardingComplete);
+                          
+                          // Also update user state immediately (both auth context and global)
                           setUser(updatedUser);
                           setUserProfile(updatedUser);
+                          setGlobalUser(updatedUser);
                           
-                          // Close bio editor
+                          // Close bio editor and reset onboarding step
                           updateState({ 
                             editingBio: false, 
                             tempBio: '', 
-                            savedBio: appState.tempBio 
+                            savedBio: appState.tempBio,
+                            onboardingStep: 1 // Reset to prevent onboarding loop
                           });
                         }}
                         style={{
@@ -6703,6 +6672,54 @@ if (!appState.showAddItem) {
                 )}
               </div>
             </div>
+
+            {/* Seller Action Buttons - Before Dashboard */}
+            {appState.currentMode === 'seller' && (
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
+                <button
+                  onClick={() => updateState({ showMyListings: true, showProfile: false })}
+                  style={{
+                    flex: 1,
+                    background: '#667eea',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '8px',
+                    padding: '10px',
+                    fontWeight: 'bold',
+                    cursor: 'pointer',
+                    fontSize: '12px'
+                  }}
+                >
+                  📝 Manage
+                </button>
+                
+                <button
+                  onClick={async () => {
+                    try {
+                      console.log('👋 Signing out from seller profile...');
+                      await signOut();
+                      console.log('✅ Sign out successful');
+                    } catch (error) {
+                      console.error('❌ Sign out failed:', error);
+                      alert('Sign out failed. Please try again.');
+                    }
+                  }}
+                  style={{
+                    flex: 1,
+                    background: '#ef4444',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '8px',
+                    padding: '10px',
+                    fontWeight: 'bold',
+                    cursor: 'pointer',
+                    fontSize: '12px'
+                  }}
+                >
+                  👋 Sign Out
+                </button>
+              </div>
+            )}
 
             {appState.currentMode === 'buyer' ? (
               <>
@@ -6753,6 +6770,35 @@ if (!appState.showAddItem) {
                     </div>
                   </div>
                 </div>
+
+                {/* Buy Profile Sign Out Button */}
+                <div style={{ marginTop: '15px' }}>
+                  <button
+                    onClick={async () => {
+                      try {
+                        console.log('👋 Signing out from buyer profile...');
+                        await signOut();
+                        console.log('✅ Sign out successful');
+                      } catch (error) {
+                        console.error('❌ Sign out failed:', error);
+                        alert('Sign out failed. Please try again.');
+                      }
+                    }}
+                    style={{
+                      width: '100%',
+                      background: '#ef4444',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '8px',
+                      padding: '10px',
+                      fontWeight: 'bold',
+                      cursor: 'pointer',
+                      fontSize: '13px'
+                    }}
+                  >
+                    👋 Sign Out
+                  </button>
+                </div>
               </>
             ) : (
               <>
@@ -6766,7 +6812,9 @@ if (!appState.showAddItem) {
                       padding: '15px',
                       textAlign: 'center'
                     }}>
-                      <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#667eea' }}>12</div>
+                      <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#667eea' }}>
+                        {appState.userListings?.filter(listing => listing.status === 'active').length || 0}
+                      </div>
                       <div style={{ fontSize: '12px', color: '#666' }}>Active Listings</div>
                     </div>
                     
@@ -6776,7 +6824,9 @@ if (!appState.showAddItem) {
                       padding: '15px',
                       textAlign: 'center'
                     }}>
-                      <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#4CAF50' }}>8</div>
+                      <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#4CAF50' }}>
+                        {appState.userListings?.filter(listing => listing.status === 'sold').length || 0}
+                      </div>
                       <div style={{ fontSize: '12px', color: '#666' }}>Sales Completed</div>
                     </div>
                     
@@ -6786,27 +6836,49 @@ if (!appState.showAddItem) {
                       padding: '15px',
                       textAlign: 'center'
                     }}>
-                      <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#ff9800' }}>2.3h</div>
+                      <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#ff9800' }}>
+                        {(() => {
+                          // Calculate average response time from chat history
+                          const chatsWithResponses = appState.chats?.filter(chat => 
+                            chat.messages && chat.messages.length > 1
+                          ) || [];
+                          
+                          if (chatsWithResponses.length === 0) return 'N/A';
+                          
+                          let totalResponseTime = 0;
+                          let responseCount = 0;
+                          
+                          chatsWithResponses.forEach(chat => {
+                            for (let i = 1; i < chat.messages.length; i++) {
+                              const currentMsg = chat.messages[i];
+                              const prevMsg = chat.messages[i-1];
+                              
+                              // Only count responses from the current user (seller)
+                              if (currentMsg.senderId !== prevMsg.senderId && 
+                                  currentMsg.senderId === user?.id) {
+                                const responseTime = currentMsg.timestamp - prevMsg.timestamp;
+                                totalResponseTime += responseTime;
+                                responseCount++;
+                              }
+                            }
+                          });
+                          
+                          if (responseCount === 0) return 'N/A';
+                          
+                          const avgResponseTimeMs = totalResponseTime / responseCount;
+                          const avgResponseTimeHours = avgResponseTimeMs / (1000 * 60 * 60);
+                          
+                          if (avgResponseTimeHours < 1) {
+                            const minutes = Math.round(avgResponseTimeHours * 60);
+                            return `${minutes}m`;
+                          } else {
+                            return `${avgResponseTimeHours.toFixed(1)}h`;
+                          }
+                        })()}
+                      </div>
                       <div style={{ fontSize: '12px', color: '#666' }}>Avg Response Time</div>
                     </div>
                   </div>
-                  
-                  <button
-                    onClick={() => updateState({ showMyListings: true, showProfile: false })}
-                    style={{
-                      width: '100%',
-                      background: '#667eea',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '10px',
-                      padding: '12px',
-                      fontWeight: 'bold',
-                      cursor: 'pointer',
-                      marginTop: '15px'
-                    }}
-                  >
-                    📝 Manage Listings
-                </button>
                 </div>
               </>
             )}
@@ -6853,26 +6925,6 @@ if (!appState.showAddItem) {
               </div>
             </div>
 
-            <button
-              onClick={signOut}
-              style={{
-                width: '100%',
-                background: '#ff4444',
-                color: 'white',
-                border: 'none',
-                borderRadius: '10px',
-                padding: '12px',
-                fontWeight: 'bold',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px'
-              }}
-            >
-              <LogOut size={16} />
-              Sign Out
-            </button>
           </div>
         </div>
       )}
