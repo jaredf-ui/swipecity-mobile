@@ -5,6 +5,9 @@ import SkeletonCard from './components/SkeletonCard';
 import { SwipeFeedback, LoadingSpinner, MatchSuccessAnimation } from './components/SwipeFeedback';
 import { DataService } from './utils/dataIntegration';
 import { testImageGeneration } from './utils/dataSeeding';
+// Firebase Auth Integration - Safe version with fallbacks
+import { useAuth } from './contexts/AuthContext-simple';
+import AuthModal from './components/AuthModal';
 // Inline shared data for Capacitor compatibility
 const SecurityUtils = {
   sanitizeInput: (input) => {
@@ -545,9 +548,10 @@ const useAuthState = () => {
   return user;
 };
 
-const AuthContext = createContext({});
+// Local auth context commented out - using Firebase auth from './contexts/AuthContext'
+// const AuthContext = createContext({});
 
-const AuthProvider = ({ children }) => {
+/* const AuthProvider = ({ children }) => {
   const user = useAuthState();
   
   const signOut = useCallback(() => {
@@ -594,12 +598,86 @@ const AuthProvider = ({ children }) => {
   };
 
   return React.createElement(AuthContext.Provider, { value }, children);
-};
+}; */
 
-const useAuth = () => useContext(AuthContext);
+// useAuth is now imported from './contexts/AuthContext'
+
+// Loading and error components
+const LoadingScreen = () => (
+  <div style={{
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    minHeight: '100vh',
+    backgroundColor: '#f8fafc',
+    flexDirection: 'column'
+  }}>
+    <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#667eea', marginBottom: '10px' }}>
+      SwipeCity
+    </div>
+    <div style={{ color: '#64748b' }}>
+      Loading your marketplace...
+    </div>
+  </div>
+);
+
+const ErrorScreen = ({ authError }) => (
+  <div style={{
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    minHeight: '100vh',
+    backgroundColor: '#f8fafc',
+    flexDirection: 'column',
+    padding: '20px'
+  }}>
+    <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#667eea', marginBottom: '10px' }}>
+      SwipeCity
+    </div>
+    <div style={{ color: '#64748b', marginBottom: '20px', textAlign: 'center' }}>
+      {authError === 'Firebase unavailable - using offline mode' ? 
+        'Running in offline mode - some features may be limited' : 
+        'Connection issue - retrying...'
+      }
+    </div>
+    <button 
+      onClick={() => window.location.reload()}
+      style={{
+        padding: '12px 24px',
+        backgroundColor: '#667eea',
+        color: 'white',
+        border: 'none',
+        borderRadius: '8px',
+        cursor: 'pointer',
+        fontSize: '16px'
+      }}
+    >
+      Retry Connection
+    </button>
+  </div>
+);
 
 const SwipeMarketplace = () => {
-  const { user, isAuthenticated, needsOnboarding, signOut, updateUserPreferences } = useAuth();
+  // Environment detection for development features
+  const isDevelopment = process.env.NODE_ENV === 'development' || 
+                       window.location.hostname === 'localhost' ||
+                       window.location.hostname === '127.0.0.1' ||
+                       window.location.protocol === 'file:';
+
+  const { 
+    user, 
+    userProfile,
+    loading: authLoading,
+    error: authError,
+    isAuthenticated, 
+    needsOnboarding, 
+    signOut,
+    saveItem: saveItemToProfile,
+    likeItem: likeItemToProfile,
+    savePreferences,
+    setUser,
+    setUserProfile
+  } = useAuth();
   
   // State for seeded items from admin dashboard
   const [seededItems, setSeededItems] = useState([]);
@@ -626,7 +704,7 @@ const SwipeMarketplace = () => {
     currentMode: 'buyer',
     currentView: 'swipe', // swipe, chats, profile
     currentItemIndex: 0,
-    showAuthModal: false, // Start with false, will be set by useEffect
+    // Removed showAuthModal - using Firebase AuthModal directly
     showChats: false,
     showProfile: false,
     showMyListings: false,
@@ -668,6 +746,9 @@ const SwipeMarketplace = () => {
     startPos: null,
     // Admin dashboard
     showAdminDashboard: false,
+    // Legal documents
+    showPrivacyPolicy: false,
+    showTermsOfService: false,
     activeChat: null,
     newMessage: '',
     chats: mockChats,
@@ -1267,7 +1348,7 @@ const handleVerifyCode = useCallback(async () => {
     setGlobalUser(userData);
     updateState({ 
       loading: false, 
-      showAuthModal: false,
+      // Removed showAuthModal reference
       showVerificationStep: false,
       verificationCode: '',
       verificationId: null
@@ -1374,7 +1455,7 @@ const handleGoogleAuth = useCallback(async () => {
         };
         
         setGlobalUser(userData);
-        updateState({ loading: false, showAuthModal: false });
+        updateState({ loading: false });
         
       } catch (popupError) {
         console.log('Popup failed, trying redirect...', popupError);
@@ -1425,7 +1506,7 @@ const handleEmailAuth = useCallback(async () => {
         created_at: Date.now()
       };
       setGlobalUser(userData);
-      updateState({ loading: false, showAuthModal: false });
+      updateState({ loading: false });
     }, 1000);
   }, [appState.email, updateState]);
 
@@ -1795,7 +1876,7 @@ const handleDragEnd = useCallback(() => {
       
       try {
         // Save to Firebase
-        await updateUserPreferences(preferences);
+        await savePreferences(preferences);
         
         // Update local state
         const updatedUser = {
@@ -1816,20 +1897,9 @@ const handleDragEnd = useCallback(() => {
         setGlobalUser(updatedUser);
       }
     }
-  }, [user, appState.selectedCategories, appState.priceRange, appState.shoppingStyle, updateUserPreferences]);
+  }, [user, appState.selectedCategories, appState.priceRange, appState.shoppingStyle, savePreferences]);
 
-  // Handle auth modal state based on authentication status
-  useEffect(() => {
-    console.log('Auth state effect:', { isAuthenticated, showAuthModal: appState.showAuthModal });
-    
-    if (!isAuthenticated && !appState.showAuthModal) {
-      console.log('User not authenticated, showing auth modal');
-      updateState({ showAuthModal: true });
-    } else if (isAuthenticated && appState.showAuthModal) {
-      console.log('User is authenticated, closing auth modal');
-      updateState({ showAuthModal: false });
-    }
-  }, [isAuthenticated, appState.showAuthModal, updateState]);
+  // Removed auth modal state management - using Firebase AuthModal directly
 
   // Check if user has seen tutorial and show it on first launch
   useEffect(() => {
@@ -1900,7 +1970,7 @@ useEffect(() => {
         };
         
         setGlobalUser(userData);
-        updateState({ loading: false, showAuthModal: false });
+        updateState({ loading: false });
         
         // Clear any stored redirect flags
         localStorage.removeItem('authRedirectInitiated');
@@ -2001,7 +2071,7 @@ useEffect(() => {
         };
         
         setGlobalUser(userData);
-        updateState({ loading: false, showAuthModal: false });
+        updateState({ loading: false });
         localStorage.removeItem('authRedirectInitiated');
       }
     });
@@ -2066,8 +2136,10 @@ if (!appState.showAddItem) {
     };
   }, [appState.showAddItem]);
 
-  // Admin dashboard trigger (triple-tap logo or Ctrl+Shift+A)
+  // Admin dashboard trigger (triple-tap logo or Ctrl+Shift+A) - Development only
   useEffect(() => {
+    if (!isDevelopment) return;
+    
     let tapCount = 0;
     let tapTimer = null;
     
@@ -2104,7 +2176,7 @@ if (!appState.showAddItem) {
       }
       if (tapTimer) clearTimeout(tapTimer);
     };
-  }, [appState.showAdminDashboard, updateState]);
+  }, [isDevelopment, appState.showAdminDashboard, updateState]);
 
   // Load seeded items from DataService with performance monitoring
   useEffect(() => {
@@ -2143,92 +2215,13 @@ if (!appState.showAddItem) {
   }, []); // Load once when component mounts
 
   console.log('Render decision:', { 
-    showAuthModal: appState.showAuthModal, 
+    // Removed showAuthModal logging 
     isAuthenticated, 
     needsOnboarding,
     userExists: !!user 
   });
 
-  if (appState.showAuthModal) {
-    console.log('Showing auth modal');
-    return (
-      <div style={{
-        minHeight: '100vh',
-        background: 'linear-gradient(135deg, #FF6B35, #FFD23F)',
-        color: 'white',
-        padding: '40px 20px',
-        textAlign: 'center',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center'
-      }}>
-        <div style={{ maxWidth: '400px', width: '100%' }}>
-          <h1 style={{ fontSize: '32px', marginBottom: '20px' }}>
-            Welcome to SwipeCity! 🎉
-          </h1>
-          <p style={{ fontSize: '18px', marginBottom: '40px', opacity: 0.9 }}>
-            The marketplace that makes buying and selling easy
-          </p>
-          
-          
-          <div style={{
-            background: 'rgba(255,255,255,0.1)',
-            borderRadius: '20px',
-            padding: '30px'
-          }}>
-            <input
-              type="email"
-              placeholder="Enter your email address"
-              value={appState.email}
-              onChange={(e) => updateState({ email: e.target.value })}
-              style={{
-                width: '100%',
-                padding: '18px',
-                fontSize: '16px',
-                border: 'none',
-                borderRadius: '15px',
-                background: 'rgba(255,255,255,0.1)',
-                color: 'white',
-                marginBottom: '20px',
-                outline: 'none',
-                boxSizing: 'border-box'
-              }}
-            />
-            <button
-              onClick={handleEmailAuth}
-              disabled={appState.loading}
-              style={{
-                width: '100%',
-                background: appState.loading ? '#ccc' : '#4CAF50',
-                color: 'white',
-                border: 'none',
-                borderRadius: '15px',
-                padding: '18px',
-                fontSize: '16px',
-                fontWeight: 'bold',
-                cursor: appState.loading ? 'not-allowed' : 'pointer'
-              }}
-            >
-              {appState.loading ? 'Signing In...' : '✨ Continue with Email'}
-            </button>
-            
-            <div style={{
-              background: 'rgba(255,255,255,0.05)',
-              borderRadius: '10px',
-              padding: '15px',
-              fontSize: '13px',
-              color: 'rgba(255,255,255,0.8)',
-              marginTop: '15px',
-              lineHeight: '1.4',
-              textAlign: 'center'
-            }}>
-              📧 We'll send you a secure sign-in link via email. No password required!
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // Legacy auth modal code removed - using Firebase AuthModal instead
 
   if (needsOnboarding) {
     console.log('Showing onboarding, step:', appState.onboardingStep);
@@ -2889,22 +2882,26 @@ if (!appState.showAddItem) {
           
           <OnboardingButtonBar
             onBack={() => updateState({ onboardingStep: 3 })}
-            onNext={() => {
-              // Complete onboarding with new preferences
-              const updatedUser = {
-                ...user,
-                onboardingComplete: true,
-                preferences: {
-                  searchKeywords: appState.searchKeywords,
-                  minPrice: appState.minPrice,
-                  maxPrice: appState.maxPrice,
-                  searchRadius: appState.searchRadius,
-                  conditionPreference: appState.conditionPreference,
-                  wantDealAlerts: appState.wantDealAlerts
-                }
+            onNext={async () => {
+              console.log('🎉 Completing onboarding...');
+              
+              // Save preferences using the auth context
+              const preferences = {
+                searchKeywords: appState.searchKeywords,
+                minPrice: appState.minPrice,
+                maxPrice: appState.maxPrice,
+                searchRadius: appState.searchRadius,
+                conditionPreference: appState.conditionPreference,
+                wantDealAlerts: appState.wantDealAlerts
               };
-              setGlobalUser(updatedUser);
-              console.log('✅ New onboarding completed with preferences:', updatedUser.preferences);
+              
+              const result = await savePreferences(preferences);
+              
+              if (result.success) {
+                console.log('✅ Onboarding completed successfully!');
+              } else {
+                console.error('❌ Failed to save preferences:', result.error);
+              }
             }}
             nextText="Start Shopping! 🎉"
           />
@@ -2917,14 +2914,30 @@ if (!appState.showAddItem) {
   }
 
 
-  // Show admin dashboard if enabled
-  if (appState.showAdminDashboard) {
+  // Show loading screen while auth is initializing
+  if (authLoading) {
+    return <LoadingScreen />;
+  }
+  
+  // Show error screen if auth failed
+  if (authError && authError !== 'Firebase unavailable - using offline mode') {
+    return <ErrorScreen authError={authError} />;
+  }
+
+  // Show admin dashboard if enabled (development only)
+  if (isDevelopment && appState.showAdminDashboard) {
     return <AdminDashboard onClose={() => updateState({ showAdminDashboard: false })} />;
   }
 
   // Main Interface
   return (
     <>
+      {/* Firebase Authentication Modal */}
+      <AuthModal 
+        isOpen={!isAuthenticated && !authLoading} 
+        onClose={() => {}} 
+      />
+      
       {appState.currentMode === 'buyer' ? (
       <div style={{
         minHeight: '100vh',
@@ -3642,7 +3655,7 @@ if (!appState.showAddItem) {
             <div style={{
               padding: '15px 20px',
               paddingTop: /android/i.test(navigator.userAgent) || window.Capacitor?.getPlatform?.() === 'android'
-                ? 'max(60px, env(safe-area-inset-top) + 45px)' // Much more padding on Android to clear admin button
+                ? (isDevelopment ? 'max(60px, env(safe-area-inset-top) + 45px)' : 'max(30px, env(safe-area-inset-top) + 15px)') // Extra padding only in development
                 : 'max(15px, env(safe-area-inset-top))', // Original iOS padding
               background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
               color: 'white',
@@ -5761,7 +5774,7 @@ if (!appState.showAddItem) {
             <div style={{
               padding: '15px 20px',
               paddingTop: /android/i.test(navigator.userAgent) || window.Capacitor?.getPlatform?.() === 'android'
-                ? 'max(60px, env(safe-area-inset-top) + 45px)' // Much more padding on Android to clear admin button
+                ? (isDevelopment ? 'max(60px, env(safe-area-inset-top) + 45px)' : 'max(30px, env(safe-area-inset-top) + 15px)') // Extra padding only in development
                 : 'max(15px, env(safe-area-inset-top))', // Original iOS padding
               background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
               color: 'white',
@@ -5860,7 +5873,7 @@ if (!appState.showAddItem) {
               
               <div style={{ textAlign: 'center', marginBottom: '30px' }}>
                 <img
-                  src={user?.avatar_url}
+                  src={userProfile?.photoURL || user?.avatar_url}
                   alt="Profile"
                   style={{
                     width: '80px',
@@ -6119,7 +6132,7 @@ if (!appState.showAddItem) {
           <div style={{
             padding: '15px 20px',
             paddingTop: /android/i.test(navigator.userAgent) || window.Capacitor?.getPlatform?.() === 'android'
-              ? 'max(60px, env(safe-area-inset-top) + 45px)' // Much more padding on Android to clear admin button
+              ? (isDevelopment ? 'max(60px, env(safe-area-inset-top) + 45px)' : 'max(30px, env(safe-area-inset-top) + 15px)') // Extra padding only in development
               : 'max(15px, env(safe-area-inset-top))', // Original iOS padding
             background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
             color: 'white',
@@ -6319,7 +6332,7 @@ if (!appState.showAddItem) {
           <div style={{
             padding: '15px 20px',
             paddingTop: /android/i.test(navigator.userAgent) || window.Capacitor?.getPlatform?.() === 'android'
-              ? 'max(60px, env(safe-area-inset-top) + 45px)' // Much more padding on Android to clear admin button
+              ? (isDevelopment ? 'max(60px, env(safe-area-inset-top) + 45px)' : 'max(30px, env(safe-area-inset-top) + 15px)') // Extra padding only in development
               : 'max(15px, env(safe-area-inset-top))', // Original iOS padding
             background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
             color: 'white',
@@ -6427,7 +6440,7 @@ if (!appState.showAddItem) {
                 }}
               >
                 <img
-                  src={user?.avatar_url}
+                  src={userProfile?.photoURL || user?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(userProfile?.displayName || user?.name || user?.displayName || user?.email || 'User')}&background=667eea&color=white&size=80`}
                   alt="Profile"
                   style={{
                     width: '80px',
@@ -6467,13 +6480,22 @@ if (!appState.showAddItem) {
                     console.log('📷 Starting photo upload process...');
                     console.log('File:', file.name, file.size, 'bytes');
                     
-                    // IMMEDIATE: Show photo right away for great UX
+                    // IMMEDIATE: Show photo right away using simple auth context
                     const reader = new FileReader();
-                    reader.onload = (event) => {
+                    reader.onload = async (event) => {
                       const imageUrl = event.target.result;
-                      const updatedUser = { ...user, avatar_url: imageUrl };
-                      setGlobalUser(updatedUser);
-                      console.log('📷 Photo updated immediately for good UX');
+                      console.log('📷 Photo loaded, updating user profile...');
+                      
+                      // Update the current user profile with the new photo
+                      const currentUser = JSON.parse(localStorage.getItem('swipecity_mock_user') || '{}');
+                      const updatedUser = { ...currentUser, photoURL: imageUrl };
+                      localStorage.setItem('swipecity_mock_user', JSON.stringify(updatedUser));
+                      
+                      // Update state immediately for both user and userProfile
+                      setUser(updatedUser);
+                      setUserProfile(updatedUser);
+                      
+                      console.log('📷 Photo updated successfully');
                     };
                     reader.readAsDataURL(file);
                     
@@ -6736,6 +6758,48 @@ if (!appState.showAddItem) {
                 </div>
               </>
             )}
+
+            {/* Legal Links */}
+            <div style={{ 
+              marginTop: '20px',
+              paddingTop: '20px', 
+              borderTop: '1px solid #eee',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '8px'
+            }}>
+              <button
+                onClick={() => updateState({ showPrivacyPolicy: true })}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#666',
+                  fontSize: '12px',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  padding: '4px 0'
+                }}
+              >
+                Privacy Policy
+              </button>
+              <button
+                onClick={() => updateState({ showTermsOfService: true })}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#666',
+                  fontSize: '12px',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  padding: '4px 0'
+                }}
+              >
+                Terms of Service
+              </button>
+              <div style={{ fontSize: '10px', color: '#999', marginTop: '8px' }}>
+                SwipeCity v1.0.0
+              </div>
+            </div>
 
             <button
               onClick={signOut}
@@ -7177,8 +7241,8 @@ if (!appState.showAddItem) {
       <SwipeFeedback type={showSwipeFeedback} show={showSwipeFeedback !== null} />
       {/* No match animation - this is a marketplace, not a dating app! */}
       
-      {/* Mobile Controls - Admin Access - Hide when profile is open or add item form is open */}
-      {!appState.showProfile && !appState.showAddItem && (
+      {/* Mobile Controls - Admin Access - Development only */}
+      {isDevelopment && !appState.showProfile && !appState.showAddItem && (
         <div style={{
           position: 'fixed',
           top: /android/i.test(navigator.userAgent) || window.Capacitor?.getPlatform?.() === 'android'
@@ -7206,14 +7270,146 @@ if (!appState.showAddItem) {
           </div>
         </div>
       )}
+
+      {/* Privacy Policy Modal */}
+      {appState.showPrivacyPolicy && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0,0,0,0.5)',
+          zIndex: 10000,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '20px'
+        }}>
+          <div style={{
+            background: 'white',
+            borderRadius: '12px',
+            maxWidth: '600px',
+            width: '100%',
+            maxHeight: '80vh',
+            overflow: 'auto',
+            padding: '20px'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h2 style={{ margin: 0, fontSize: '18px' }}>Privacy Policy</h2>
+              <button
+                onClick={() => updateState({ showPrivacyPolicy: false })}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  fontSize: '24px',
+                  cursor: 'pointer',
+                  color: '#666'
+                }}
+              >
+                ×
+              </button>
+            </div>
+            <div style={{ fontSize: '14px', lineHeight: '1.5', color: '#333' }}>
+              <p><strong>Last Updated:</strong> December 2024</p>
+              
+              <h3>Introduction</h3>
+              <p>SwipeCity respects your privacy and is committed to protecting your personal information. This Privacy Policy explains how we collect, use, and protect your information when you use the SwipeCity mobile application.</p>
+              
+              <h3>Information We Collect</h3>
+              <h4>Personal Information</h4>
+              <ul>
+                <li><strong>Account Information:</strong> Email address, display name, and profile photo</li>
+                <li><strong>Profile Data:</strong> Shopping preferences, categories of interest, and onboarding responses</li>
+                <li><strong>User-Generated Content:</strong> Items you list for sale, photos you upload, and messages you send</li>
+              </ul>
+              
+              <h4>Usage Information</h4>
+              <ul>
+                <li><strong>App Activity:</strong> Items you view, like, or save</li>
+                <li><strong>Device Information:</strong> Device type, operating system, and app version</li>
+                <li><strong>Performance Data:</strong> App crashes and usage statistics (anonymized)</li>
+              </ul>
+              
+              <h3>How We Use Your Information</h3>
+              <p>We use your information to provide and improve the SwipeCity marketplace experience, enable communication between users, personalize your experience, and ensure platform safety.</p>
+              
+              <h3>Contact Us</h3>
+              <p>For questions about this Privacy Policy, please contact us at privacy@swipecity.app</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Terms of Service Modal */}
+      {appState.showTermsOfService && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0,0,0,0.5)',
+          zIndex: 10000,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '20px'
+        }}>
+          <div style={{
+            background: 'white',
+            borderRadius: '12px',
+            maxWidth: '600px',
+            width: '100%',
+            maxHeight: '80vh',
+            overflow: 'auto',
+            padding: '20px'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h2 style={{ margin: 0, fontSize: '18px' }}>Terms of Service</h2>
+              <button
+                onClick={() => updateState({ showTermsOfService: false })}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  fontSize: '24px',
+                  cursor: 'pointer',
+                  color: '#666'
+                }}
+              >
+                ×
+              </button>
+            </div>
+            <div style={{ fontSize: '14px', lineHeight: '1.5', color: '#333' }}>
+              <p><strong>Last Updated:</strong> December 2024</p>
+              
+              <h3>Agreement to Terms</h3>
+              <p>By accessing or using the SwipeCity mobile application, you agree to be bound by these Terms of Service and our Privacy Policy.</p>
+              
+              <h3>User Conduct</h3>
+              <p>You agree to use SwipeCity only for lawful purposes. You may not:</p>
+              <ul>
+                <li>Post false, misleading, or fraudulent listings</li>
+                <li>Sell prohibited items (weapons, illegal drugs, counterfeit goods, etc.)</li>
+                <li>Harass, abuse, or harm other users</li>
+                <li>Use the platform for spam or unauthorized advertising</li>
+              </ul>
+              
+              <h3>Transactions</h3>
+              <p>SwipeCity facilitates connections but is not party to transactions. All sales are final between buyers and sellers. We do not handle payments or guarantee transactions.</p>
+              
+              <h3>Prohibited Items</h3>
+              <p>The following items are prohibited: illegal items, weapons, drugs, stolen goods, adult content, live animals (with exceptions), and items that infringe intellectual property rights.</p>
+              
+              <h3>Contact Us</h3>
+              <p>For questions about these Terms, please contact us at legal@swipecity.app</p>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 };
 
-const App = () => (
-  <AuthProvider>
-    <SwipeMarketplace />
-  </AuthProvider>
-);
-
-export default App;
+// Export SwipeMarketplace directly - it's wrapped with AuthProvider in AppWrapper.js
+export default SwipeMarketplace;

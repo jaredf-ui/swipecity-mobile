@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "360980103663",
+    "project_id": "swipecity-marketplace",
+    "storage_bucket": "swipecity-marketplace.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:360980103663:android:6c03696d617a6186fe361a",
+        "android_client_info": {
+          "package_name": "com.jaredfeeny.swipecity"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "360980103663-google-oauth-client-id.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCgmWYvEGhC9F2mzJ-azIEWusxRvRS9V2I"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "360980103663-web-oauth-client-id.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

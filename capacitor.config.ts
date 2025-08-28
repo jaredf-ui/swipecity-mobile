@@ -11,25 +11,25 @@ const config: CapacitorConfig = {
   ios: {
     scheme: 'SwipeCity',
     contentInset: 'automatic',
-    backgroundColor: '#ffffff'
+    backgroundColor: '#4F6EF7'
   },
   plugins: {
     SplashScreen: {
       launchShowDuration: 500,
       launchAutoHide: true,
-      backgroundColor: '#ffffff',
+      backgroundColor: '#4F6EF7',
       androidSplashResourceName: 'splash',
       androidScaleType: 'CENTER_CROP',
       showSpinner: false,
       androidSpinnerStyle: 'large',
       iosSpinnerStyle: 'small',
-      spinnerColor: '#667eea',
+      spinnerColor: '#ffffff',
       splashFullScreen: true,
       splashImmersive: true
     },
     StatusBar: {
-      style: 'default',
-      backgroundColor: '#ffffff'
+      style: 'light',
+      backgroundColor: '#4F6EF7'
     }
   }
 };

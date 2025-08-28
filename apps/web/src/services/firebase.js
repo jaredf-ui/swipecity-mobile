@@ -1,7 +1,20 @@
 // Firebase services - Production configuration
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithEmailLink, sendSignInLinkToEmail, signOut as firebaseSignOut } from 'firebase/auth';
-import { getFirestore, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, orderBy, limit, where, getDoc } from 'firebase/firestore';
+import { 
+  getAuth, 
+  signInWithEmailLink, 
+  sendSignInLinkToEmail, 
+  signOut as firebaseSignOut,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  GoogleAuthProvider,
+  sendPasswordResetEmail,
+  updateProfile,
+  onAuthStateChanged,
+  sendEmailVerification
+} from 'firebase/auth';
+import { getFirestore, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, orderBy, limit, where, getDoc, setDoc } from 'firebase/firestore';
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 
 // Firebase configuration
@@ -23,6 +36,230 @@ const storage = getStorage(app);
 
 // Auth Service
 class AuthService {
+  // Register new user with email and password
+  async registerWithEmailPassword(email, password, displayName) {
+    try {
+      // Create auth user
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
+      
+      // Update display name
+      if (displayName) {
+        await updateProfile(user, { displayName });
+      }
+      
+      // Send email verification
+      await sendEmailVerification(user);
+      
+      // Create user profile in Firestore
+      const userProfile = {
+        uid: user.uid,
+        email: user.email,
+        displayName: displayName || email.split('@')[0],
+        photoURL: null,
+        emailVerified: user.emailVerified,
+        onboardingComplete: false,
+        preferences: {
+          categories: [],
+          priceRange: null,
+          shoppingStyle: null,
+          locationRadius: 10
+        },
+        savedItems: [],
+        likedItems: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      };
+      
+      await setDoc(doc(db, 'users', user.uid), userProfile);
+      
+      return { success: true, user, profile: userProfile };
+    } catch (error) {
+      console.error('Registration error:', error);
+      let errorMessage = 'Registration failed. Please try again.';
+      
+      if (error.code === 'auth/email-already-in-use') {
+        errorMessage = 'This email is already registered. Please sign in instead.';
+      } else if (error.code === 'auth/weak-password') {
+        errorMessage = 'Password must be at least 6 characters long.';
+      } else if (error.code === 'auth/invalid-email') {
+        errorMessage = 'Please enter a valid email address.';
+      }
+      
+      return { success: false, error: errorMessage };
+    }
+  }
+
+  // Sign in with email and password
+  async signInWithEmailPassword(email, password) {
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
+      
+      // Get user profile from Firestore
+      const userDoc = await getDoc(doc(db, 'users', user.uid));
+      let profile = userDoc.data();
+      
+      // If profile doesn't exist, create it
+      if (!profile) {
+        profile = {
+          uid: user.uid,
+          email: user.email,
+          displayName: user.displayName || email.split('@')[0],
+          photoURL: user.photoURL,
+          emailVerified: user.emailVerified,
+          onboardingComplete: false,
+          preferences: {
+            categories: [],
+            priceRange: null,
+            shoppingStyle: null,
+            locationRadius: 10
+          },
+          savedItems: [],
+          likedItems: [],
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        };
+        
+        await setDoc(doc(db, 'users', user.uid), profile);
+      }
+      
+      return { success: true, user, profile };
+    } catch (error) {
+      console.error('Sign in error:', error);
+      let errorMessage = 'Sign in failed. Please try again.';
+      
+      if (error.code === 'auth/user-not-found') {
+        errorMessage = 'No account found with this email. Please sign up first.';
+      } else if (error.code === 'auth/wrong-password') {
+        errorMessage = 'Incorrect password. Please try again.';
+      } else if (error.code === 'auth/invalid-email') {
+        errorMessage = 'Please enter a valid email address.';
+      } else if (error.code === 'auth/too-many-requests') {
+        errorMessage = 'Too many failed attempts. Please try again later.';
+      }
+      
+      return { success: false, error: errorMessage };
+    }
+  }
+
+  // Sign in with Google
+  async signInWithGoogle() {
+    try {
+      const provider = new GoogleAuthProvider();
+      provider.addScope('email');
+      provider.addScope('profile');
+      
+      const result = await signInWithPopup(auth, provider);
+      const user = result.user;
+      
+      // Check if user profile exists
+      const userDoc = await getDoc(doc(db, 'users', user.uid));
+      let profile = userDoc.data();
+      
+      // If profile doesn't exist, create it
+      if (!profile) {
+        profile = {
+          uid: user.uid,
+          email: user.email,
+          displayName: user.displayName,
+          photoURL: user.photoURL,
+          emailVerified: user.emailVerified,
+          onboardingComplete: false,
+          preferences: {
+            categories: [],
+            priceRange: null,
+            shoppingStyle: null,
+            locationRadius: 10
+          },
+          savedItems: [],
+          likedItems: [],
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        };
+        
+        await setDoc(doc(db, 'users', user.uid), profile);
+      }
+      
+      return { success: true, user, profile };
+    } catch (error) {
+      console.error('Google sign in error:', error);
+      let errorMessage = 'Google sign in failed. Please try again.';
+      
+      if (error.code === 'auth/popup-blocked') {
+        errorMessage = 'Please allow popups for this site and try again.';
+      } else if (error.code === 'auth/popup-closed-by-user') {
+        errorMessage = 'Sign in was cancelled.';
+      }
+      
+      return { success: false, error: errorMessage };
+    }
+  }
+
+  // Send password reset email
+  async sendPasswordResetEmail(email) {
+    try {
+      await sendPasswordResetEmail(auth, email);
+      return { success: true };
+    } catch (error) {
+      console.error('Password reset error:', error);
+      let errorMessage = 'Failed to send password reset email.';
+      
+      if (error.code === 'auth/user-not-found') {
+        errorMessage = 'No account found with this email address.';
+      } else if (error.code === 'auth/invalid-email') {
+        errorMessage = 'Please enter a valid email address.';
+      }
+      
+      return { success: false, error: errorMessage };
+    }
+  }
+
+  // Update user profile
+  async updateUserProfile(updates) {
+    try {
+      const user = auth.currentUser;
+      if (!user) throw new Error('No user logged in');
+      
+      // Update auth profile if displayName or photoURL changed
+      if (updates.displayName || updates.photoURL) {
+        await updateProfile(user, {
+          displayName: updates.displayName || user.displayName,
+          photoURL: updates.photoURL || user.photoURL
+        });
+      }
+      
+      // Update Firestore profile
+      await updateDoc(doc(db, 'users', user.uid), {
+        ...updates,
+        updatedAt: Date.now()
+      });
+      
+      return { success: true };
+    } catch (error) {
+      console.error('Update profile error:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // Get current user profile from Firestore
+  async getCurrentUserProfile() {
+    try {
+      const user = auth.currentUser;
+      if (!user) return { success: false, error: 'No user logged in' };
+      
+      const userDoc = await getDoc(doc(db, 'users', user.uid));
+      if (!userDoc.exists()) {
+        return { success: false, error: 'User profile not found' };
+      }
+      
+      return { success: true, profile: userDoc.data() };
+    } catch (error) {
+      console.error('Get profile error:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
   async sendSignInLink(email) {
     try {
       const actionCodeSettings = {
