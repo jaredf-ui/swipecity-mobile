@@ -1215,6 +1215,56 @@ const handleEmailAuth = useCallback(async () => {
     }, 1000);
   }, [appState.email, updateState]);
 
+const addListingPhotos = useCallback(async (fileList, source = 'camera') => {
+    const files = Array.from(fileList || []);
+    if (files.length === 0) return;
+
+    const currentImages = appState.selectedImages || [];
+    if (currentImages.length + files.length > 4) {
+      alert('Maximum 4 photos allowed');
+      return;
+    }
+
+    // Quick anti-bot verification, kept for both camera and library photos
+    const questions = [
+      "What's the main color of your item?",
+      "How many items are shown in this photo?",
+      "Is this item indoors or outdoors?",
+      "Is there text visible on your item?",
+      "What category best describes this item?"
+    ];
+
+    const newImages = [];
+    for (const file of files) {
+      const randomQuestion = questions[Math.floor(Math.random() * questions.length)];
+      const answer = prompt(`🤖 Quick verification: ${randomQuestion}\n\n(This helps prevent bots from posting fake items)`);
+      if (!answer || answer.trim().length < 2) {
+        alert('Please provide an answer to continue posting.');
+        return;
+      }
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (event) => resolve(event.target.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      newImages.push({
+        file,
+        url: dataUrl,
+        name: file.name,
+        timestamp: Date.now(),
+        verified: true,
+        source,
+        verificationQuestion: randomQuestion,
+        verificationAnswer: answer.trim()
+      });
+    }
+
+    if (newImages.length > 0) {
+      updateState({ selectedImages: [...currentImages, ...newImages] });
+    }
+  }, [appState.selectedImages, updateState]);
+
 const handleSaveForLater = useCallback(() => {
     console.log('💾 Save for Later clicked');
     console.log('💾 currentItem:', currentItem?.title);
@@ -4904,9 +4954,9 @@ if (!appState.showAddItem) {
 
           {/* Photo Upload Section */}
           <div style={{ marginBottom: '25px' }}>
-            <h3 style={{ color: '#333', marginBottom: '8px', fontSize: '16px' }}>📸 Photos (up to 4) - Camera Only</h3>
+            <h3 style={{ color: '#333', marginBottom: '8px', fontSize: '16px' }}>📸 Photos (up to 4)</h3>
             <p style={{ color: '#666', fontSize: '12px', marginBottom: '15px' }}>
-              🛡️ <strong>Bot Prevention:</strong> Photos must be taken with your camera (no uploads from gallery). First photo will be the main image.
+              🛡️ <strong>Quick verification:</strong> Take a photo with your camera or choose from your library. You'll answer a quick question per photo to help prevent fake listings. First photo will be the main image.
             </p>
             <div style={{
               display: 'grid',
@@ -4990,6 +5040,7 @@ if (!appState.showAddItem) {
               ))}
               
               {(!appState.selectedImages || appState.selectedImages.length < 4) && (
+                <>
                 <label htmlFor="camera-capture" style={{
                   aspectRatio: '1/1',
                   border: '2px dashed #4CAF50',
@@ -5008,62 +5059,46 @@ if (!appState.showAddItem) {
                 }}>
                   <Camera size={24} style={{ color: '#4CAF50', marginBottom: '5px' }} />
                   <span style={{ fontSize: '12px', color: '#4CAF50', textAlign: 'center', fontWeight: '600' }}>Take Photo</span>
-                  <span style={{ fontSize: '9px', color: '#666', textAlign: 'center', marginTop: '2px' }}>Camera Only 🛡️</span>
+                  <span style={{ fontSize: '9px', color: '#666', textAlign: 'center', marginTop: '2px' }}>Camera 📷</span>
                   <input
                     type="file"
                     accept="image/*"
                     capture="environment"
                     style={{ display: 'none' }}
                     id="camera-capture"
-                    onChange={async (e) => {
-                      const files = Array.from(e.target.files);
-                      const currentImages = appState.selectedImages || [];
-                      
-                      if (currentImages.length + files.length > 4) {
-                        alert('Maximum 4 photos allowed');
-                        return;
-                      }
-                      
-                      for (const file of files) {
-                        // Generate verification question
-                        const questions = [
-                          "What's the main color of your item?",
-                          "How many items are shown in this photo?",
-                          "Is this item indoors or outdoors?",
-                          "Is there text visible on your item?",
-                          "What category best describes this item?"
-                        ];
-                        
-                        const randomQuestion = questions[Math.floor(Math.random() * questions.length)];
-                        
-                        // Show verification dialog
-                        const answer = prompt(`🤖 Quick verification: ${randomQuestion}\n\n(This helps prevent bots from posting fake items)`);
-                        
-                        if (!answer || answer.trim().length < 2) {
-                          alert('Please provide an answer to continue posting.');
-                          return;
-                        }
-                        
-                        const reader = new FileReader();
-                        reader.onload = (event) => {
-                          const newImage = {
-                            file: file,
-                            url: event.target.result,
-                            name: file.name,
-                            timestamp: Date.now(),
-                            verified: true,
-                            verificationQuestion: randomQuestion,
-                            verificationAnswer: answer.trim()
-                          };
-                          updateState({ 
-                            selectedImages: [...(appState.selectedImages || []), newImage] 
-                          });
-                        };
-                        reader.readAsDataURL(file);
-                      }
-                    }}
+                    onChange={(e) => { addListingPhotos(e.target.files, 'camera'); e.target.value = ''; }}
                   />
                 </label>
+
+                <label htmlFor="library-upload" style={{
+                  aspectRatio: '1/1',
+                  border: '2px dashed #667eea',
+                  borderRadius: '12px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  background: 'linear-gradient(135deg, #f0f3ff, #e8ecff)',
+                  transition: 'all 0.2s ease',
+                  minWidth: '120px',
+                  height: '120px',
+                  position: 'relative',
+                  boxShadow: '0 2px 8px rgba(102, 126, 234, 0.1)'
+                }}>
+                  <span style={{ fontSize: '24px', marginBottom: '5px' }}>🖼️</span>
+                  <span style={{ fontSize: '12px', color: '#667eea', textAlign: 'center', fontWeight: '600' }}>Choose Photo</span>
+                  <span style={{ fontSize: '9px', color: '#666', textAlign: 'center', marginTop: '2px' }}>From Library</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    style={{ display: 'none' }}
+                    id="library-upload"
+                    onChange={(e) => { addListingPhotos(e.target.files, 'library'); e.target.value = ''; }}
+                  />
+                </label>
+                </>
               )}
             </div>
           </div>
