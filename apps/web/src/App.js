@@ -7670,6 +7670,38 @@ if (!appState.showAddItem) {
         onModeChange={(mode) => {
           console.log('Changing mode to:', mode);
           
+          // Guard: don't let an unfinished listing be silently abandoned when
+          // switching modes. Previously this left buyer-mode view state stuck and
+          // hid the swipe "Save" button. Make the user finish or cancel first.
+          if (appState.showAddItem) {
+            const hasContent = !!(appState.newItemTitle || appState.newItemPrice ||
+              appState.newItemDescription || appState.newItemCondition || appState.newItemCity ||
+              (appState.selectedImages && appState.selectedImages.length > 0));
+            if (hasContent && !window.confirm('You have an unfinished listing. Discard it and switch modes? Otherwise finish posting it, or tap Cancel on the listing.')) {
+              return; // stay in seller mode so the listing can be finished or cancelled
+            }
+            // Discarding (or empty form): fully reset the listing AND the view so
+            // the buyer swipe controls reappear.
+            updateState({
+              currentMode: mode,
+              showAddItem: false,
+              showMyListings: false,
+              selectedImages: [],
+              newItemTitle: '',
+              newItemPrice: '',
+              newItemDescription: '',
+              newItemCondition: '',
+              newItemCity: '',
+              currentView: 'swipe',
+              showChats: false,
+              showProfile: false,
+              showSavedItems: false,
+              activeChat: null,
+              showSwipeTutorial: mode === 'buyer' && !appState.hasSeenBuyModeTutorial
+            });
+            return;
+          }
+
           // Show swipe tutorial when entering buy mode for the first time
           if (mode === 'buyer' && !appState.hasSeenBuyModeTutorial) {
             updateState({ currentMode: mode, showSwipeTutorial: true });
