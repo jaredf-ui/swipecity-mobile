@@ -1,0 +1,2 @@
+[error] ios platform has not been added yet.
+        See the docs for adding the ios platform: https://capacitorjs.com/docs/ios#adding-the-ios-platform

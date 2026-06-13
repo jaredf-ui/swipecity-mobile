@@ -4,9 +4,6 @@
   "private": true,
   "homepage": ".",
   "dependencies": {
-    "@swipecity/firebase": "file:../../packages/firebase",
-    "@swipecity/shared": "file:../../packages/shared",
-    "@swipecity/ui": "file:../../packages/ui",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.3.0",

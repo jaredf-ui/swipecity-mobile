@@ -2,25 +2,27 @@ rules_version = '2';
 
 service firebase.storage {
   match /b/{bucket}/o {
-    // TEMPORARY: Allow unauthenticated uploads for testing
-    // TODO: Enable proper authentication before production
+    // Profile photos - users can only manage their own photos
     match /profile-photos/{userId}/{allPaths=**} {
-      allow read, write: if true; // Temporary open access for testing
+      allow read: if true; // Public read for marketplace
+      allow write: if request.auth != null && request.auth.uid == userId;
     }
     
-    // Item photos - temporarily allow unauthenticated uploads
+    // Item photos - sellers can manage their own item photos
     match /item-photos/{itemId}/{allPaths=**} {
-      allow read, write: if true; // Temporary open access for testing
+      allow read: if true; // Public read for marketplace
+      allow write: if request.auth != null; // Must be authenticated to upload
     }
     
-    // Test images for Firebase integration testing
-    match /test-images/{allPaths=**} {
-      allow read, write: if true;
+    // Unsplash and seeded demo images - read only
+    match /demo-images/{allPaths=**} {
+      allow read: if true;
     }
     
-    // Allow reading all images for marketplace functionality
+    // Default: authenticated users can read all images for marketplace functionality
     match /{allPaths=**} {
-      allow read: if true; // Temporary open read access
+      allow read: if true; // Public read for marketplace images
+      allow write: if false; // Deny all other writes
     }
   }
 }

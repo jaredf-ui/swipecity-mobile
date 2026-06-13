@@ -1,4 +1,4 @@
-import React, { useState, useEffect, createContext, useContext, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, createContext, useContext, useCallback, useMemo, Component } from 'react';
 import { MessageCircle, User, LogOut, Camera } from 'lucide-react';
 import AdminDashboard from './components/AdminDashboard';
 import SkeletonCard from './components/SkeletonCard';
@@ -6,8 +6,10 @@ import { SwipeFeedback, LoadingSpinner, MatchSuccessAnimation } from './componen
 import { DataService } from './utils/dataIntegration';
 import { testImageGeneration } from './utils/dataSeeding';
 // Firebase Auth Integration - Safe version with fallbacks
-import { useAuth } from './contexts/AuthContext-simple';
+import { useAuth } from './contexts/AuthContextNative';
 import AuthModal from './components/AuthModal';
+// Complete data persistence system
+import { getDataManager } from './utils/dataPersistence';
 // Inline shared data for Capacitor compatibility
 const SecurityUtils = {
   sanitizeInput: (input) => {
@@ -378,7 +380,6 @@ const CloseButton = ({ onClick, color = 'white', backgroundColor = 'rgba(255,255
   const handleClose = (e) => {
     e.preventDefault();
     e.stopPropagation(); // Prevent event bubbling but allow button click
-    console.log('CloseButton clicked, calling onClick'); // Debug log
     if (onClick) {
       onClick();
     }
@@ -458,7 +459,6 @@ if (typeof window !== 'undefined') {
       
       if (window.firebase && !window.firebase.apps.length) {
         window.firebase.initializeApp(FIREBASE_CONFIG);
-        console.log('🔥 Firebase Auth Ready!');
       }
     } catch (error) {
       console.error('❌ Firebase Error:', error);
@@ -509,6 +509,11 @@ const setGlobalUser = (user) => {
   authListeners.forEach(listener => listener(user));
 };
 
+// Expose setGlobalUser to window for AuthContextNative
+if (typeof window !== 'undefined') {
+  window.setGlobalUser = setGlobalUser;
+}
+
 const useAuthState = () => {
   const [user, setUser] = useState(null);
   
@@ -520,10 +525,6 @@ const useAuthState = () => {
         const parsedUser = JSON.parse(savedUser);
         setGlobalUser(parsedUser);
         setUser(parsedUser); // Set local state immediately
-        console.log('✅ Loaded user from localStorage:', parsedUser);
-        console.log('✅ User onboarding status:', parsedUser.onboardingComplete);
-      } else {
-        console.log('🔍 No saved user found in localStorage');
       }
     } catch (error) {
       console.error('Failed to load user from localStorage:', error);
@@ -532,7 +533,6 @@ const useAuthState = () => {
     
     // Set up listener for future changes
     const listener = (newUser) => {
-      console.log('🔄 Auth state listener triggered:', newUser);
       setUser(newUser);
     };
     authListeners.add(listener);
@@ -572,7 +572,6 @@ const useAuthState = () => {
       };
       setGlobalUser(updatedUser);
       
-      console.log('✅ User preferences updated:', updatedUser);
       return { success: true };
     } catch (error) {
       console.error('Failed to update user preferences:', error);
@@ -582,12 +581,6 @@ const useAuthState = () => {
 
   const needsOnboarding = user && !user.onboardingComplete;
   
-  // Debug logging for onboarding state
-  console.log('🔍 AuthProvider value calculation:', {
-    user: user ? { id: user.id, email: user.email, onboardingComplete: user.onboardingComplete } : null,
-    isAuthenticated: Boolean(user),
-    needsOnboarding: needsOnboarding
-  });
 
   const value = {
     user,
@@ -658,6 +651,7 @@ const ErrorScreen = ({ authError }) => (
 );
 
 const SwipeMarketplace = () => {
+  
   // Environment detection for development features - STRICT production mode
   const isDevelopment = process.env.NODE_ENV === 'development' && (
                        window.location.hostname === 'localhost' ||
@@ -665,21 +659,68 @@ const SwipeMarketplace = () => {
                        window.location.protocol === 'http:' ||
                        window.location.search.includes('dev=true')
                      );
+                     
 
-  const { 
-    user, 
-    userProfile,
-    loading: authLoading,
-    error: authError,
-    isAuthenticated, 
-    needsOnboarding, 
-    signOut,
-    saveItem: saveItemToProfile,
-    likeItem: likeItemToProfile,
-    savePreferences,
-    setUser,
-    setUserProfile
-  } = useAuth();
+    const { 
+      user, 
+      userProfile,
+      loading: authLoading,
+      error: authError,
+      isAuthenticated, 
+      needsOnboarding, 
+      signOut,
+      deleteAccount,
+      saveItem: saveItemToProfile,
+      likeItem: likeItemToProfile,
+      savePreferences,
+      setUser,
+      setUserProfile,
+      saveChats,
+      loadChats
+    } = useAuth();
+    
+    console.log('🚀 useAuth hook completed, user:', !!user, 'loading:', authLoading);
+  
+  // Debug: Log user object from AuthContext every render
+  // Initialize data manager for current user
+  
+  // Auth state sync fix
+  useEffect(() => {
+    if (user && !isAuthenticated) {
+      // Force trigger auth listeners
+      authListeners.forEach(listener => listener(user));
+    }
+  }, [user, isAuthenticated]);
+
+  // Sync auth states from modal
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const authModalUser = window.authModalUser; // Will be set by AuthModal
+      if (authModalUser && !user) {
+        setGlobalUser(authModalUser);
+      }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [user]);
+  
+  const dataManager = user?.email ? getDataManager(user.email) : null;
+  
+  // Helper function to save chats to localStorage (defined early to avoid temporal dead zone)
+  // Mode must be passed explicitly to avoid dependency issues
+  const saveChatsToStorage = useCallback((chats, mode) => {
+    if (user && mode) {
+      try {
+        const userKey = `swipecity_user_${user.email.replace(/[@+.]/g, '_')}`;
+        const storageKey = `${userKey}_${mode}_chats`;
+        localStorage.setItem(storageKey, JSON.stringify(chats));
+        console.log(`💾 Saved ${mode} chats to localStorage:`, chats.length, 'chats');
+      } catch (error) {
+        console.error('Failed to save chats to localStorage:', error);
+      }
+    }
+  }, [user]);
+
+  // openChat function moved to after updateState definition to avoid temporal dead zone
   
   // State for seeded items from admin dashboard
   const [seededItems, setSeededItems] = useState([]);
@@ -695,18 +736,30 @@ const SwipeMarketplace = () => {
   const [showSwipeFeedback, setShowSwipeFeedback] = useState(null);
   const [showMatchAnimation, setShowMatchAnimation] = useState(false);
   
-  // Debug logging
-  console.log('SwipeMarketplace render:', { 
-    user: user ? { id: user.id, email: user.email, onboardingComplete: user.onboardingComplete } : null, 
+  // Debug logging with platform detection
+  const platform = window.Capacitor?.getPlatform?.() || 'web';
+  console.log(`[${platform.toUpperCase()}] SwipeMarketplace render:`, { 
+    user: user ? { id: user.id, uid: user.uid, email: user.email, onboardingComplete: user.onboardingComplete } : null, 
     isAuthenticated, 
-    needsOnboarding 
+    needsOnboarding,
+    userExists: !!user,
+    loading: authLoading,
+    error: authError,
+    platform
   });
+  
+  // iOS-specific debugging
+  if (platform === 'ios') {
+    console.log('[iOS] Loading state:', authLoading, 'Error:', authError);
+    console.log('[iOS] Firebase services available:', !!window.firebaseServices);
+    console.log('[iOS] User auth state:', { isAuthenticated, needsOnboarding });
+  }
   
   const [appState, setAppState] = useState({
     currentMode: 'buyer',
     currentView: 'swipe', // swipe, chats, profile
     currentItemIndex: 0,
-    // Removed showAuthModal - using Firebase AuthModal directly
+    showAuthModal: false, // Only show when user tries protected actions
     showChats: false,
     showProfile: false,
     showMyListings: false,
@@ -753,13 +806,14 @@ const SwipeMarketplace = () => {
     showTermsOfService: false,
     activeChat: null,
     newMessage: '',
-    chats: mockChats,
+    chats: [], // Will be loaded using DataManager
     showAddItem: false,
     selectedImages: [],
     newItemTitle: '',
     newItemPrice: '',
     newItemDescription: '',
     newItemCondition: '',
+    newItemCity: '',
     lastPassedItem: null,
     canUndo: false,
     showEditModal: false,
@@ -1086,6 +1140,61 @@ const SwipeMarketplace = () => {
   const updateState = useCallback((updates) => {
     setAppState(prev => ({ ...prev, ...updates }));
   }, []);
+
+  // Helper function to open a chat with fresh data from Firebase/localStorage
+  const openChat = useCallback(async (chat) => {
+    if (!user?.email) {
+      console.log('🔐 Authentication required for messaging');
+      updateState({ showAuthModal: true });
+      return;
+    }
+
+    try {
+      const mode = appState.currentMode;
+      let savedChats = [];
+      
+      // Try to load from Firebase first for cross-device sync
+      if (user.uid && window.firebaseServices?.firestore) {
+        try {
+          savedChats = await window.firebaseServices.firestore.loadUserChats(user.uid, mode);
+          console.log(`🔥 Loaded ${mode} chats from Firebase:`, savedChats.length);
+        } catch (firebaseError) {
+          console.error(`Failed to load ${mode} chats from Firebase:`, firebaseError);
+          savedChats = []; // Will fallback to localStorage
+        }
+      }
+      
+      // Fallback to localStorage if Firebase failed or no data
+      if (savedChats.length === 0) {
+        const userKey = `swipecity_user_${user.email.replace(/[@+.]/g, '_')}`;
+        const storageKey = `${userKey}_${mode}_chats`;
+        const savedData = localStorage.getItem(storageKey);
+        
+        if (savedData) {
+          savedChats = JSON.parse(savedData);
+          console.log(`💾 Loaded ${mode} chats from localStorage:`, savedChats.length);
+        }
+      }
+      
+      if (savedChats.length > 0) {
+        const freshChat = savedChats.find(savedChat => savedChat.id === chat.id);
+        
+        if (freshChat) {
+          console.log(`🔄 Opening ${mode} chat with fresh data:`, freshChat.id, 'Messages:', freshChat.messages?.length || 0);
+          updateState({ activeChat: freshChat, chats: savedChats });
+        } else {
+          console.log(`⚠️ Chat not found in saved ${mode} data, using original`);
+          updateState({ activeChat: chat });
+        }
+      } else {
+        console.log(`⚠️ No saved ${mode} data found, using original chat`);
+        updateState({ activeChat: chat });
+      }
+    } catch (error) {
+      console.error('Failed to load fresh chat data:', error);
+      updateState({ activeChat: chat });
+    }
+  }, [user, updateState, appState.currentMode]);
 
   // Sample chat data
   const sampleChats = [
@@ -1570,6 +1679,13 @@ const handleSwipe = useCallback((direction) => {
     console.log('🔍 DEBUG: Items length:', items.length);
     console.log('🔍 DEBUG: User UID:', user?.uid);
     
+    // Check authentication for right swipe (like)
+    if (direction === 'right' && !isAuthenticated) {
+      console.log('🔐 Authentication required for liking items');
+      updateState({ showAuthModal: true });
+      return;
+    }
+    
     // Check daily swipe limit before processing swipe
     if (appState.dailySwipeCount >= appState.maxDailySwipes) {
       console.log('🚫 Daily swipe limit reached');
@@ -1744,16 +1860,21 @@ const handleApproveInterest = useCallback((interest) => {
     messages: []
   };
   
+  const updatedChats = [newChat, ...appState.chats.filter(chat => chat.id !== newChat.id)];
+  
   updateState({ 
     buyerInterests: updatedInterests,
-    chats: [newChat, ...appState.chats.filter(chat => chat.id !== newChat.id)],
+    chats: updatedChats,
     activeChat: newChat,
     showChats: true,
     currentView: 'home' // Switch to home view which shows chats
   });
   
+  // Save chats to localStorage
+  saveChatsToStorage(updatedChats, appState.currentMode);
+  
   console.log(`✅ Approved interest from ${interest.buyerName} for ${interest.itemTitle} - opening chat`);
-}, [appState.buyerInterests, appState.chats, updateState]);
+}, [appState.buyerInterests, appState.chats, appState.currentMode, updateState, saveChatsToStorage]);
 
 // Handle seller rejecting buyer interest
 const handleRejectInterest = useCallback((interest) => {
@@ -2080,6 +2201,100 @@ useEffect(() => {
   }
 }, [updateState]);
 
+  // Load chats from localStorage when user changes or mode changes
+  useEffect(() => {
+    console.log('🔄 Chat loading useEffect triggered. User:', user?.email, 'Mode:', appState.currentMode);
+    if (user && user.email) {
+      try {
+        const mode = appState.currentMode;
+        const userKey = `swipecity_user_${user.email.replace(/[@+.]/g, '_')}`;
+        const storageKey = `${userKey}_${mode}_chats`;
+        console.log('🗝️ Looking for chats with key:', storageKey);
+        const savedChats = localStorage.getItem(storageKey);
+        
+        if (savedChats) {
+          const parsedChats = JSON.parse(savedChats);
+          console.log(`✅ Loaded ${mode} chats from localStorage:`, parsedChats.length, 'chats');
+          console.log('📚 Chat details:', parsedChats.map(c => ({ id: c.id, messageCount: c.messages?.length || 0, lastMessage: c.last_message })));
+          updateState({ chats: parsedChats });
+        } else {
+          // No saved chats for this mode, use mockChats for new user
+          console.log(`🔍 No saved ${mode} chats found, using mock chats`);
+          console.log('📚 Mock chat details:', mockChats.map(c => ({ id: c.id, messageCount: c.messages?.length || 0, lastMessage: c.last_message })));
+          updateState({ chats: mockChats });
+        }
+      } catch (error) {
+        console.error('Failed to load chats from localStorage:', error);
+        // Fallback to mockChats
+        updateState({ chats: mockChats });
+      }
+    } else {
+      // Clear chats when no user
+      console.log('🚫 No user, clearing chats');
+      updateState({ chats: [] });
+    }
+  }, [user, appState.currentMode, updateState]);
+
+  // Moved to earlier in the component to avoid temporal dead zone error
+
+  // Direct localStorage message persistence
+  const sendMessage = useCallback(async (messageText) => {
+    if (!messageText.trim() || !appState.activeChat || !user?.email) return;
+
+    const newMsg = {
+      id: `msg_${Date.now()}`,
+      sender_id: user?.uid || user?.id || 'user123',
+      sender_name: user?.displayName || user?.username || 'You',
+      text: messageText.trim(),
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    };
+
+    const updatedActiveChat = {
+      ...appState.activeChat,
+      messages: [...(appState.activeChat.messages || []), newMsg],
+      last_message: newMsg.text,
+      timestamp: newMsg.timestamp
+    };
+
+    const updatedChats = appState.chats.map(chat => 
+      chat.id === appState.activeChat.id 
+        ? { ...chat, last_message: newMsg.text, timestamp: newMsg.timestamp, messages: updatedActiveChat.messages }
+        : chat
+    );
+
+    // Update state first
+    updateState({
+      newMessage: '',
+      activeChat: updatedActiveChat,
+      chats: updatedChats
+    });
+
+    // Save chats to both Firebase and localStorage for cross-device sync
+    try {
+      const mode = appState.currentMode;
+      
+      // Save to Firebase Firestore for cross-device sync (if available)
+      if (user.uid && window.firebaseServices?.firestore) {
+        try {
+          await window.firebaseServices.firestore.saveUserChats(user.uid, mode, updatedChats);
+          console.log(`✅ ${mode} chats saved to Firebase for cross-device sync`);
+        } catch (firebaseError) {
+          console.error(`Failed to save ${mode} chats to Firebase:`, firebaseError);
+          // Continue with localStorage fallback
+        }
+      }
+      
+      // Always save to localStorage as backup/immediate access
+      const userKey = `swipecity_user_${user.email.replace(/[@+.]/g, '_')}`;
+      const storageKey = `${userKey}_${mode}_chats`;
+      localStorage.setItem(storageKey, JSON.stringify(updatedChats));
+      console.log(`💾 ${mode} chats saved to localStorage:`, updatedChats.length);
+      
+    } catch (error) {
+      console.error('Failed to save chats:', error);
+    }
+  }, [appState.activeChat, appState.chats, appState.currentMode, user, updateState]);
+
   useEffect(() => {
     // Aggressive scroll position reset for mobile browsers
     const resetScroll = () => {
@@ -2214,16 +2429,26 @@ if (!appState.showAddItem) {
     window.testImageGeneration = testImageGeneration;
   }, []); // Load once when component mounts
 
-  console.log('Render decision:', { 
-    // Removed showAuthModal logging 
-    isAuthenticated, 
-    needsOnboarding,
-    userExists: !!user 
-  });
+  // Check for stored user to maintain session across reloads
+  const hasStoredUser = () => {
+    try {
+      const savedUser = localStorage.getItem('swipecity_user');
+      const nativeUser = localStorage.getItem('swipecity_native_user'); 
+      const demoUser = localStorage.getItem('swipecity_demo_user');
+      return !!(savedUser || nativeUser || demoUser);
+    } catch {
+      return false;
+    }
+  };
+  
+  const userInStorage = hasStoredUser();
 
   // Legacy auth modal code removed - using Firebase AuthModal instead
 
-  if (needsOnboarding) {
+  // Bypass authentication checks if user session exists
+  if (userInStorage) {
+    // Skip authentication and onboarding - go to main app
+  } else if (needsOnboarding) {
     console.log('Showing onboarding, step:', appState.onboardingStep);
     
     /* BACKUP: Original complex onboarding flow removed for streamlined version
@@ -2864,35 +3089,20 @@ if (!appState.showAddItem) {
                 ))}
               </div>
             </div>
-            
-            <div>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={appState.wantDealAlerts}
-                  onChange={(e) => updateState({ wantDealAlerts: e.target.checked })}
-                  style={{ transform: 'scale(1.2)' }}
-                />
-                <span style={{ fontSize: '14px' }}>
-                  📱 Notify me about great deals matching my interests
-                </span>
-              </label>
-            </div>
           </div>
-          
+
           <OnboardingButtonBar
             onBack={() => updateState({ onboardingStep: 3 })}
             onNext={async () => {
               console.log('🎉 Completing onboarding...');
-              
+
               // Save preferences using the auth context
               const preferences = {
                 searchKeywords: appState.searchKeywords,
                 minPrice: appState.minPrice,
                 maxPrice: appState.maxPrice,
                 searchRadius: appState.searchRadius,
-                conditionPreference: appState.conditionPreference,
-                wantDealAlerts: appState.wantDealAlerts
+                conditionPreference: appState.conditionPreference
               };
               
               const result = await savePreferences(preferences);
@@ -2932,10 +3142,10 @@ if (!appState.showAddItem) {
   // Main Interface
   return (
     <>
-      {/* Firebase Authentication Modal */}
+      {/* Firebase Authentication Modal - Only show when user tries protected actions */}
       <AuthModal 
-        isOpen={!isAuthenticated && !authLoading} 
-        onClose={() => {}} 
+        isOpen={appState.showAuthModal} 
+        onClose={() => updateState({ showAuthModal: false })} 
       />
       
       {appState.currentMode === 'buyer' ? (
@@ -3119,7 +3329,7 @@ if (!appState.showAddItem) {
                               return sellerBios[currentItem.seller_name] || `${currentItem.seller_name} is a trusted seller on SwipeCity with ${currentItem.seller_reviews} reviews and a ${currentItem.seller_rating} star rating.`;
                             })();
                             
-                            alert(`📝 Seller Profile\n\n👤 ${currentItem.seller_name}\n⭐ ${currentItem.seller_rating} rating (${currentItem.seller_reviews} reviews)\n📍 ${currentItem.distance}\n${currentItem.verified ? '✅ Verified Seller' : '⚠️ Unverified'}\n\n${sellerBio}`);
+                            alert(`📝 Seller Profile\n\n👤 ${currentItem.seller_name}\n⭐ ${currentItem.seller_rating} rating (${currentItem.seller_reviews} reviews)\n📍 ${currentItem.city || currentItem.distance || 'Location not specified'}\n${currentItem.verified ? '✅ Verified Seller' : '⚠️ Unverified'}\n\n${sellerBio}`);
                           }}
                           style={{ 
                             fontWeight: '600', 
@@ -3249,7 +3459,7 @@ if (!appState.showAddItem) {
                   <p style={{ color: '#666', margin: '10px 0', fontSize: '14px', lineHeight: '1.4' }}>{currentItem.description}</p>
                   
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '15px' }}>
-                    <span style={{ color: '#888', fontSize: '14px' }}>📍 {currentItem.distance}</span>
+                    <span style={{ color: '#888', fontSize: '14px' }}>📍 {currentItem.city || currentItem.distance || 'Location not specified'}</span>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
                       <span style={{ color: '#888', fontSize: '14px' }}>❤️ {currentItem.likes_count} likes</span>
                       <div style={{
@@ -3296,7 +3506,8 @@ if (!appState.showAddItem) {
           )}
         </div>
 
-{/* Action Buttons - Bottom layout */}
+{/* Action Buttons - Bottom layout - Only show in swipe view and not when showing other modals */}
+{appState.currentView === 'swipe' && !appState.showChats && !appState.activeChat && !appState.showProfile && !appState.showSavedItems && (
 <div style={{
   position: 'fixed',
   bottom: /android/i.test(navigator.userAgent) || window.Capacitor?.getPlatform?.() === 'android'
@@ -3406,6 +3617,7 @@ if (!appState.showAddItem) {
     </button>
   </div>
 </div>
+)}
 
 
         {/* Match Animation Modal */}
@@ -3504,14 +3716,29 @@ if (!appState.showAddItem) {
                       ]
                     };
                     
-                    setAppState(prev => ({
-                      ...prev,
-                      showMatchAnimation: false,
-                      matchedItem: null,
-                      showChats: true,
-                      activeChat: newChat,
-                      chats: [newChat, ...prev.chats.filter(chat => chat.id !== newChat.id)]
-                    }));
+                    setAppState(prev => {
+                      const updatedChats = [newChat, ...prev.chats.filter(chat => chat.id !== newChat.id)];
+                      
+                      // Save chats to localStorage
+                      if (user) {
+                        try {
+                          const userKey = `swipecity_user_${user.email.replace(/[@+.]/g, '_')}`;
+                          localStorage.setItem(`${userKey}_chats`, JSON.stringify(updatedChats));
+                          console.log('💾 Saved chats to localStorage after match:', updatedChats.length, 'chats');
+                        } catch (error) {
+                          console.error('Failed to save chats to localStorage:', error);
+                        }
+                      }
+                      
+                      return {
+                        ...prev,
+                        showMatchAnimation: false,
+                        matchedItem: null,
+                        showChats: true,
+                        activeChat: newChat,
+                        chats: updatedChats
+                      };
+                    });
                   }}
                   style={{
                     background: '#4CAF50',
@@ -3618,37 +3845,16 @@ if (!appState.showAddItem) {
 
         {/* Individual Chat Modal */}
         {appState.activeChat && (
-          <>
-            {/* Close backdrop */}
-            <div 
-              style={{
-                position: 'fixed',
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                background: 'rgba(0,0,0,0.3)',
-                zIndex: 9998
-              }}
-              onClick={() => {
-                console.log('Individual chat backdrop clicked');
-                updateState({ showChats: false, activeChat: null });
-              }}
-              onTouchEnd={(e) => {
-                e.preventDefault();
-                console.log('Individual chat backdrop touched');
-                updateState({ showChats: false, activeChat: null });
-              }}
-            />
-            {/* Modal content */}
             <div style={{
               position: 'fixed',
               top: 'max(0px, env(safe-area-inset-top))',
               left: 0,
               right: 0,
-              bottom: 0,
+              bottom: /android/i.test(navigator.userAgent) || window.Capacitor?.getPlatform?.() === 'android' 
+                ? '75px' // Leave room for bottom nav on Android
+                : '60px', // Leave room for bottom nav on iOS
               background: 'white',
-              zIndex: 9999,
+              zIndex: 999,
               display: 'flex',
               flexDirection: 'column'
             }}>
@@ -3800,29 +4006,8 @@ if (!appState.showAddItem) {
                 value={appState.newMessage}
                 onChange={(e) => updateState({ newMessage: e.target.value })}
                 onKeyPress={(e) => {
-                  if (e.key === 'Enter' && appState.newMessage.trim()) {
-                    const newMsg = {
-                      id: `msg_${Date.now()}`,
-                      sender_id: user?.id || 'user123',
-                      sender_name: user?.username || 'You',
-                      text: appState.newMessage.trim(),
-                      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                    };
-                    
-                    updateState({
-                      newMessage: '',
-                      activeChat: {
-                        ...appState.activeChat,
-                        messages: [...appState.activeChat.messages, newMsg],
-                        last_message: newMsg.text,
-                        timestamp: newMsg.timestamp
-                      },
-                      chats: appState.chats.map(chat => 
-                        chat.id === appState.activeChat.id 
-                          ? { ...chat, last_message: newMsg.text, timestamp: newMsg.timestamp }
-                          : chat
-                      )
-                    });
+                  if (e.key === 'Enter') {
+                    sendMessage(appState.newMessage);
                   }
                 }}
                 style={{
@@ -3836,30 +4021,7 @@ if (!appState.showAddItem) {
               />
               <button
                 onClick={() => {
-                  if (appState.newMessage.trim()) {
-                    const newMsg = {
-                      id: `msg_${Date.now()}`,
-                      sender_id: user?.id || 'user123',
-                      sender_name: user?.username || 'You',
-                      text: appState.newMessage.trim(),
-                      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                    };
-                    
-                    updateState({
-                      newMessage: '',
-                      activeChat: {
-                        ...appState.activeChat,
-                        messages: [...appState.activeChat.messages, newMsg],
-                        last_message: newMsg.text,
-                        timestamp: newMsg.timestamp
-                      },
-                      chats: appState.chats.map(chat => 
-                        chat.id === appState.activeChat.id 
-                          ? { ...chat, last_message: newMsg.text, timestamp: newMsg.timestamp }
-                          : chat
-                      )
-                    });
-                  }
+                  sendMessage(appState.newMessage);
                 }}
                 disabled={!appState.newMessage.trim()}
                 style={{
@@ -3879,7 +4041,6 @@ if (!appState.showAddItem) {
               </button>
             </div>
           </div>
-          </>
         )}
 
         {/* Settings Modal */}
@@ -3952,15 +4113,114 @@ if (!appState.showAddItem) {
                   }}
                 />
                 {appState.searchKeywords && (
-                  <p style={{ 
-                    fontSize: '13px', 
-                    color: '#667eea', 
+                  <p style={{
+                    fontSize: '13px',
+                    color: '#667eea',
                     marginTop: '8px',
                     fontStyle: 'italic'
                   }}>
                     We'll prioritize "{appState.searchKeywords}" in your feed
                   </p>
                 )}
+              </div>
+
+              {/* Categories Section */}
+              <div style={{ marginBottom: '30px' }}>
+                <h3 style={{ marginBottom: '10px', fontSize: '16px', color: '#333', fontWeight: '600' }}>
+                  🏷️ Your Interested Categories
+                </h3>
+                <p style={{ fontSize: '13px', color: '#666', marginBottom: '15px' }}>
+                  Select categories to see items you're interested in
+                </p>
+                {(() => {
+                  const shoppingCategories = [
+                    { id: 'electronics', label: 'Electronics' },
+                    { id: 'clothing', label: 'Clothing' },
+                    { id: 'shoes', label: 'Shoes' },
+                    { id: 'home', label: 'Home & Garden' },
+                    { id: 'sports', label: 'Sports & Outdoors' },
+                    { id: 'books', label: 'Books' },
+                    { id: 'toys', label: 'Toys & Games' },
+                    { id: 'beauty', label: 'Beauty & Health' },
+                    { id: 'automotive', label: 'Automotive' },
+                    { id: 'jewelry', label: 'Jewelry' },
+                    { id: 'baby', label: 'Baby & Kids' },
+                    { id: 'tools', label: 'Tools & DIY' },
+                    { id: 'music', label: 'Music' },
+                    { id: 'art', label: 'Art & Crafts' },
+                    { id: 'furniture', label: 'Furniture' },
+                    { id: 'vintage', label: 'Vintage' }
+                  ];
+                  const selectedCategories = appState.selectedShoppingCategories || [];
+
+                  return (
+                    <>
+                      {selectedCategories.length > 0 && (
+                        <div style={{
+                          marginBottom: '12px',
+                          padding: '10px',
+                          background: '#f8f9ff',
+                          borderRadius: '8px',
+                          border: '1px solid #e1e8ff'
+                        }}>
+                          <div style={{ fontSize: '12px', marginBottom: '6px', color: '#667eea', fontWeight: 'bold' }}>
+                            Selected ({selectedCategories.length}):
+                          </div>
+                          <div style={{ fontSize: '11px', color: '#666', lineHeight: '1.4' }}>
+                            {selectedCategories.map(cat => {
+                              const category = shoppingCategories.find(c => c.id === cat);
+                              return category ? category.label : '';
+                            }).join(', ')}
+                          </div>
+                        </div>
+                      )}
+                      <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(3, 1fr)',
+                        gap: '8px',
+                        maxHeight: '240px',
+                        overflowY: 'auto',
+                        padding: '5px'
+                      }}>
+                        {shoppingCategories.map((category) => {
+                          const isSelected = selectedCategories.includes(category.id);
+                          return (
+                            <button
+                              key={category.id}
+                              onClick={() => {
+                                const newCategories = isSelected
+                                  ? selectedCategories.filter(c => c !== category.id)
+                                  : [...selectedCategories, category.id];
+                                updateState({ selectedShoppingCategories: newCategories });
+                              }}
+                              style={{
+                                padding: '10px 6px',
+                                borderRadius: '8px',
+                                border: isSelected ? '2px solid #667eea' : '2px solid #e1e8ff',
+                                background: isSelected ? 'rgba(102, 126, 234, 0.1)' : 'white',
+                                color: isSelected ? '#667eea' : '#333',
+                                fontSize: '11px',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                textAlign: 'center',
+                                transition: 'all 0.2s ease',
+                                fontWeight: isSelected ? 'bold' : 'normal',
+                                minHeight: '44px'
+                              }}
+                            >
+                              {category.label}
+                              {isSelected && (
+                                <span style={{ marginLeft: '4px' }}>✓</span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
 
               {/* Budget Range Section */}
@@ -4161,21 +4421,6 @@ if (!appState.showAddItem) {
                 </div>
               </div>
 
-              {/* Deal Alerts Section */}
-              <div style={{ marginBottom: '30px' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={appState.wantDealAlerts}
-                    onChange={(e) => updateState({ wantDealAlerts: e.target.checked })}
-                    style={{ transform: 'scale(1.3)' }}
-                  />
-                  <span style={{ fontSize: '15px', color: '#333' }}>
-                    📱 Notify me about great deals matching my interests
-                  </span>
-                </label>
-              </div>
-
               </div>
 
               {/* Fixed Action Buttons Area */}
@@ -4211,11 +4456,11 @@ if (!appState.showAddItem) {
                       preferences: {
                         ...user.preferences,
                         searchKeywords: appState.searchKeywords,
+                        categories: appState.selectedShoppingCategories,
                         minPrice: appState.minPrice,
                         maxPrice: appState.maxPrice,
                         searchRadius: appState.searchRadius,
-                        conditionPreference: appState.conditionPreference,
-                        wantDealAlerts: appState.wantDealAlerts
+                        conditionPreference: appState.conditionPreference
                       }
                     };
                     setGlobalUser(updatedUser);
@@ -5006,7 +5251,7 @@ if (!appState.showAddItem) {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px' }}>
             <h2 style={{ margin: 0, color: '#333', fontSize: '24px' }}>List New Item</h2>
             <button
-              onClick={() => updateState({ showAddItem: false, selectedImages: [], newItemTitle: '', newItemPrice: '', newItemDescription: '', newItemCondition: '' })}
+              onClick={() => updateState({ showAddItem: false, selectedImages: [], newItemTitle: '', newItemPrice: '', newItemDescription: '', newItemCondition: '', newItemCity: '' })}
               style={{
                 background: 'none',
                 border: 'none',
@@ -5250,6 +5495,26 @@ if (!appState.showAddItem) {
             </select>
           </div>
 
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', color: '#333', fontWeight: 'bold' }}>
+              City *
+            </label>
+            <input
+              type="text"
+              placeholder="e.g., San Francisco"
+              value={appState.newItemCity || ''}
+              onChange={(e) => updateState({ newItemCity: SecurityUtils.sanitizeInput(e.target.value) })}
+              style={{
+                width: '100%',
+                padding: '12px',
+                borderRadius: '8px',
+                border: '1px solid #ddd',
+                fontSize: '16px',
+                boxSizing: 'border-box'
+              }}
+            />
+          </div>
+
           <div style={{ marginBottom: '25px' }}>
             <label style={{ display: 'block', marginBottom: '8px', color: '#333', fontWeight: 'bold' }}>
               Description
@@ -5274,22 +5539,23 @@ if (!appState.showAddItem) {
           {/* Submit Button */}
           <button
             onClick={() => {
-              if (!appState.newItemTitle || !appState.newItemPrice || !appState.newItemCondition) {
+              if (!appState.newItemTitle || !appState.newItemPrice || !appState.newItemCondition || !appState.newItemCity) {
                 alert('Please fill in all required fields');
                 return;
               }
-              
+
               if (!appState.selectedImages || appState.selectedImages.length === 0) {
                 alert('Please add at least one photo');
                 return;
               }
-              
+
               // Create new listing object
               const newListing = {
                 id: 'listing_' + Date.now(),
                 title: SecurityUtils.sanitizeInputFinal(appState.newItemTitle),
                 price: appState.newItemPrice,
                 condition: appState.newItemCondition,
+                city: SecurityUtils.sanitizeInputFinal(appState.newItemCity),
                 description: SecurityUtils.sanitizeInputFinal(appState.newItemDescription),
                 images: appState.selectedImages,
                 seller_id: user?.id || 'user123',
@@ -5297,31 +5563,32 @@ if (!appState.showAddItem) {
                 created_at: Date.now(),
                 status: 'active'
               };
-              
+
               // Add to user listings
-              updateState({ 
+              updateState({
                 userListings: [...(appState.userListings || []), newListing],
-                showAddItem: false, 
-                selectedImages: [], 
-                newItemTitle: '', 
-                newItemPrice: '', 
-                newItemDescription: '', 
-                newItemCondition: '' 
+                showAddItem: false,
+                selectedImages: [],
+                newItemTitle: '',
+                newItemPrice: '',
+                newItemDescription: '',
+                newItemCondition: '',
+                newItemCity: ''
               });
-              
+
               alert('Item listed successfully! 🎉');
             }}
-            disabled={!appState.newItemTitle || !appState.newItemPrice || !appState.newItemCondition || !appState.selectedImages || appState.selectedImages.length === 0}
+            disabled={!appState.newItemTitle || !appState.newItemPrice || !appState.newItemCondition || !appState.newItemCity || !appState.selectedImages || appState.selectedImages.length === 0}
             style={{
               width: '100%',
-              background: (!appState.newItemTitle || !appState.newItemPrice || !appState.newItemCondition || !appState.selectedImages || appState.selectedImages.length === 0) ? '#ccc' : '#4CAF50',
+              background: (!appState.newItemTitle || !appState.newItemPrice || !appState.newItemCondition || !appState.newItemCity || !appState.selectedImages || appState.selectedImages.length === 0) ? '#ccc' : '#4CAF50',
               color: 'white',
               border: 'none',
               borderRadius: '12px',
               padding: '15px',
               fontSize: '16px',
               fontWeight: 'bold',
-              cursor: (!appState.newItemTitle || !appState.newItemPrice || !appState.newItemCondition || !appState.selectedImages || appState.selectedImages.length === 0) ? 'not-allowed' : 'pointer'
+              cursor: (!appState.newItemTitle || !appState.newItemPrice || !appState.newItemCondition || !appState.newItemCity || !appState.selectedImages || appState.selectedImages.length === 0) ? 'not-allowed' : 'pointer'
             }}
           >
             List Item
@@ -5715,37 +5982,16 @@ if (!appState.showAddItem) {
 
         {/* Chat List Modal */}
         {appState.showChats && !appState.activeChat && (
-          <>
-            {/* Close backdrop */}
-            <div 
-              style={{
-                position: 'fixed',
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                background: 'rgba(0,0,0,0.3)',
-                zIndex: 9998
-              }}
-              onClick={() => {
-                console.log('Chat backdrop clicked');
-                updateState({ showChats: false });
-              }}
-              onTouchEnd={(e) => {
-                e.preventDefault();
-                console.log('Chat backdrop touched');
-                updateState({ showChats: false });
-              }}
-            />
-            {/* Modal content */}
             <div style={{
               position: 'fixed',
               top: 'max(0px, env(safe-area-inset-top))',
               left: 0,
               right: 0,
-              bottom: 0,
+              bottom: /android/i.test(navigator.userAgent) || window.Capacitor?.getPlatform?.() === 'android' 
+                ? '75px' // Leave room for bottom nav on Android
+                : '60px', // Leave room for bottom nav on iOS
               background: 'white',
-              zIndex: 9999,
+              zIndex: 999,
               display: 'flex',
               flexDirection: 'column'
             }}>
@@ -5774,7 +6020,7 @@ if (!appState.showAddItem) {
                 appState.chats.map(chat => (
                   <div
                     key={chat.id}
-                    onClick={() => updateState({ activeChat: chat })}
+                    onClick={() => openChat(chat)}
                     style={{
                       padding: '15px 20px',
                       borderBottom: '1px solid #f0f0f0',
@@ -5819,7 +6065,6 @@ if (!appState.showAddItem) {
               )}
             </div>
           </div>
-          </>
         )}
 
         {/* Profile Panel */}
@@ -5850,15 +6095,207 @@ if (!appState.showAddItem) {
               </div>
               
               <div style={{ textAlign: 'center', marginBottom: '30px' }}>
-                <img
-                  src={userProfile?.photoURL || user?.avatar_url}
-                  alt="Profile"
-                  style={{
-                    width: '80px',
-                    height: '80px',
+                <div style={{
+                  position: 'relative',
+                  display: 'inline-block',
+                  cursor: 'pointer'
+                }}
+                onClick={() => {
+                  const input = document.getElementById('buyer-profile-photo-input');
+                  if (input) input.click();
+                }}
+                >
+                  <img
+                    key={`profile-photo-${userProfile?.photoUpdatedAt || user?.photoUpdatedAt || appState.lastPhotoUpdate || appState.forcePhotoRefresh || 'default'}`}
+                    src={userProfile?.photoURL || userProfile?.avatar_url || user?.photoURL || user?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(userProfile?.displayName || user?.name || user?.displayName || user?.email || 'User')}&background=667eea&color=white&size=120`}
+                    alt="Profile"
+                    style={{
+                      width: '120px',
+                      height: '120px',
+                      borderRadius: '50%',
+                      objectFit: 'cover',
+                      border: '2px solid #667eea',
+                      opacity: appState.uploadingPhoto ? 0.7 : 1,
+                      display: 'block'
+                    }}
+                    onLoad={() => console.log('📷 [ANDROID] Image loaded successfully')}
+                    onError={(e) => console.log('📷 [ANDROID] Image failed to load:', e)}
+                  />
+                  <div style={{
+                    position: 'absolute',
+                    bottom: '-2px',
+                    right: '-2px',
+                    width: '24px',
+                    height: '24px',
+                    background: '#667eea',
                     borderRadius: '50%',
-                    marginBottom: '15px',
-                    objectFit: 'cover'
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    border: '2px solid white',
+                    fontSize: '12px'
+                  }}>
+                    📷
+                  </div>
+                </div>
+                <input
+                  id="buyer-profile-photo-input"
+                  type="file"
+                  accept="image/*"
+                  capture="user"
+                  style={{ display: 'none' }}
+                  onChange={async (e) => {
+                    const file = e.target.files[0];
+                    if (file && user) {
+                      console.log('📷 Starting photo upload process...');
+                      console.log('File:', file.name, file.size, 'bytes');
+                      
+                      // IMMEDIATE: Force refresh key FIRST to prepare for photo display
+                      const refreshKey = Math.random();
+                      updateState(prevState => ({ 
+                        ...prevState,
+                        forcePhotoRefresh: refreshKey,
+                        uploadingPhoto: true
+                      }));
+                      
+                      const reader = new FileReader();
+                      reader.onload = async (event) => {
+                        const imageUrl = event.target.result;
+                        console.log('📷 [ANDROID] Photo loaded, size:', imageUrl.length, 'bytes');
+                        
+                        // Get fresh user data from localStorage
+                        const currentUser = JSON.parse(localStorage.getItem('swipecity_demo_user') || '{}');
+                        console.log('📷 [ANDROID] Current user:', currentUser.email);
+                        
+                        // Create updated user with photo
+                        const updatedUser = { 
+                          ...currentUser,
+                          ...user, // Merge with current user from context
+                          photoURL: imageUrl,
+                          avatar_url: imageUrl, // Store in both fields for compatibility
+                          onboardingComplete: true,
+                          photoUpdatedAt: Date.now()
+                        };
+                        
+                        // Save to ALL localStorage keys to ensure persistence
+                        localStorage.setItem('swipecity_demo_user', JSON.stringify(updatedUser));
+                        localStorage.setItem('swipecity_mock_user', JSON.stringify(updatedUser));
+                        localStorage.setItem('swipecity_user', JSON.stringify(updatedUser));
+                        
+                        // Also save to user-specific key
+                        if (updatedUser.email) {
+                          const userKey = `swipecity_user_${updatedUser.email.replace(/[@+.]/g, '_')}`;
+                          localStorage.setItem(userKey, JSON.stringify(updatedUser));
+                        }
+                        
+                        console.log('📷 [ANDROID] Photo saved to localStorage');
+                        
+                        // Update app state FIRST with photo refresh
+                        updateState(prevState => ({ 
+                          ...prevState,
+                          uploadingPhoto: false,
+                          photoUploadMessage: 'Photo saved!',
+                          lastPhotoUpdate: Date.now(),
+                          forcePhotoRefresh: refreshKey // Same key to trigger re-render
+                        }));
+                        
+                        // THEN update user contexts in next tick to ensure state is ready
+                        setTimeout(() => {
+                          console.log('📷 [ANDROID] Updating user contexts...');
+                          setUser(() => ({ ...updatedUser }));
+                          setUserProfile(() => ({ ...updatedUser }));
+                          setGlobalUser(() => ({ ...updatedUser }));
+                          
+                          console.log('📷 [ANDROID] Photo display should update now');
+                        }, 50);
+                        
+                        setTimeout(() => updateState({ photoUploadMessage: null }), 2000);
+                        
+                        // Try Firebase sync in background (don't wait for it)
+                        if (window.firebaseServices?.firestore && user.uid) {
+                          window.firebaseServices.firestore.updateUserProfile(user.uid, { 
+                            photoURL: imageUrl,
+                            avatar_url: imageUrl 
+                          }).catch(err => console.log('Firebase sync failed:', err));
+                        }
+                      };
+                      reader.readAsDataURL(file);
+                      
+                      // BACKGROUND: Upload to Firebase Storage for persistence
+                      updateState({ uploadingPhoto: true });
+                      
+                      setTimeout(async () => {
+                        try {
+                          const platform = window.Capacitor?.getPlatform?.() || 'web';
+                          
+                          // Skip Firebase upload on iOS
+                          if (platform === 'ios') {
+                            console.log('📷 [IOS] Skipping Firebase Storage upload - iOS offline mode');
+                            return;
+                          }
+                          
+                          console.log(`📷 [${platform.toUpperCase()}] Starting Firebase Storage upload...`);
+                          const { initializeFirebaseServices, getStorageService } = await import('./services/firebase');
+                          await initializeFirebaseServices();
+                          const storageService = getStorageService();
+                          
+                          const userId = user.uid || user.id || `user_${Date.now()}`;
+                          const uploadPath = `profile-photos/${userId}/${Date.now()}_${file.name}`;
+                          
+                          const result = await storageService.uploadImage(file, uploadPath);
+                          
+                          if (result.success && result.url) {
+                            console.log('✅ [ANDROID] Firebase Storage upload successful:', result.url);
+                            
+                            // Get current user data
+                            const currentUser = JSON.parse(localStorage.getItem('swipecity_demo_user') || '{}');
+                            const updatedUserWithFirebaseURL = { 
+                              ...currentUser,
+                              photoURL: result.url, // Update to Firebase URL
+                              avatar_url: result.url,
+                              photoUpdatedAt: Date.now()
+                            };
+                            
+                            // Save Firebase URL to ALL localStorage keys
+                            localStorage.setItem('swipecity_demo_user', JSON.stringify(updatedUserWithFirebaseURL));
+                            localStorage.setItem('swipecity_mock_user', JSON.stringify(updatedUserWithFirebaseURL));
+                            localStorage.setItem('swipecity_user', JSON.stringify(updatedUserWithFirebaseURL));
+                            
+                            if (updatedUserWithFirebaseURL.email) {
+                              const userKey = `swipecity_user_${updatedUserWithFirebaseURL.email.replace(/[@+.]/g, '_')}`;
+                              localStorage.setItem(userKey, JSON.stringify(updatedUserWithFirebaseURL));
+                            }
+                            
+                            // Update ALL state contexts with Firebase URL
+                            setUser(() => updatedUserWithFirebaseURL);
+                            setUserProfile(() => updatedUserWithFirebaseURL);
+                            setGlobalUser(() => updatedUserWithFirebaseURL);
+                            
+                            // Also save Firebase URL to Firestore for cross-device sync
+                            if (window.firebaseServices?.firestore && user.uid) {
+                              try {
+                                await window.firebaseServices.firestore.updateUserProfile(user.uid, { 
+                                  photoURL: result.url,
+                                  avatar_url: result.url 
+                                });
+                                console.log('✅ [ANDROID] Photo URL saved to Firestore for cross-device sync');
+                              } catch (error) {
+                                console.log('⚠️ [ANDROID] Firestore save failed:', error.message);
+                              }
+                            }
+                            
+                            updateState({ photoUploadMessage: 'Photo synced to cloud!' });
+                            setTimeout(() => updateState({ photoUploadMessage: null }), 2000);
+                          }
+                        } catch (error) {
+                          console.log('📱 [ANDROID] Firebase upload failed, using local photo:', error.message);
+                        } finally {
+                          updateState({ uploadingPhoto: false });
+                        }
+                      }, 500); // Small delay to ensure local display happens first
+                    }
+                    // Reset input
+                    e.target.value = '';
                   }}
                 />
                 <h4 style={{ margin: '0 0 5px 0' }}>{user?.username}</h4>
@@ -5893,33 +6330,91 @@ if (!appState.showAddItem) {
                       <div style={{ display: 'flex', gap: '8px', marginTop: '8px', justifyContent: 'center' }}>
                         <button
                           onClick={() => {
-                            // Save bio to localStorage (preserve onboarding status)
+                            console.log('📝 [ANDROID] Cancel button clicked');
+                            // Close without saving
+                            updateState({ 
+                              editingBio: false, 
+                              tempBio: ''
+                            });
+                          }}
+                          style={{
+                            background: '#f44336',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '6px',
+                            padding: '8px 16px',
+                            fontSize: '14px',
+                            cursor: 'pointer',
+                            fontWeight: 'bold',
+                            minHeight: '36px',
+                            minWidth: '80px',
+                            touchAction: 'manipulation',
+                            WebkitTapHighlightColor: 'transparent'
+                          }}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={() => {
+                            const platform = window.Capacitor?.getPlatform?.() || 'web';
+                            console.log(`📝 [${platform.toUpperCase()}] Save button clicked!`);
+                            console.log(`📝 [${platform.toUpperCase()}] Current tempBio:`, appState.tempBio);
+                            
+                            // Get ALL user data
                             const currentUser = JSON.parse(localStorage.getItem('swipecity_demo_user') || '{}');
+                            console.log(`📝 [${platform.toUpperCase()}] Current user from localStorage:`, currentUser.email);
+                            
                             const updatedUser = { 
-                              ...currentUser, 
+                              ...currentUser,
+                              ...user, // Merge with context user
                               bio: appState.tempBio,
-                              // Force onboarding complete to prevent going back to onboarding
-                              onboardingComplete: true
+                              onboardingComplete: true,
+                              bioUpdatedAt: Date.now()
                             };
+                            
+                            console.log(`📝 [${platform.toUpperCase()}] Updated user bio:`, updatedUser.bio);
+                            
+                            // Save to ALL localStorage keys
                             localStorage.setItem('swipecity_demo_user', JSON.stringify(updatedUser));
-                            // Also save to user-specific key for persistence across logins
-                            const userKey = `swipecity_user_${updatedUser.email.replace(/[@+.]/g, '_')}`;
-                            localStorage.setItem(userKey, JSON.stringify(updatedUser));
+                            localStorage.setItem('swipecity_mock_user', JSON.stringify(updatedUser));
+                            localStorage.setItem('swipecity_user', JSON.stringify(updatedUser));
                             
-                            console.log('📝 Bio update - setting user with onboardingComplete:', updatedUser.onboardingComplete);
+                            if (updatedUser.email) {
+                              const userKey = `swipecity_user_${updatedUser.email.replace(/[@+.]/g, '_')}`;
+                              localStorage.setItem(userKey, JSON.stringify(updatedUser));
+                              console.log(`📝 [${platform.toUpperCase()}] Bio saved to user-specific key:`, userKey);
+                            }
                             
-                            // Also update user state immediately (both auth context and global)
-                            setUser(updatedUser);
-                            setUserProfile(updatedUser);
-                            setGlobalUser(updatedUser);
+                            console.log(`📝 [${platform.toUpperCase()}] Bio saved to localStorage`);
                             
-                            // Close bio editor and reset onboarding step
+                            // Force update ALL state contexts with delay for iOS
+                            setTimeout(() => {
+                              console.log(`📝 [${platform.toUpperCase()}] Updating user contexts...`);
+                              setUser(() => ({ ...updatedUser }));
+                              setUserProfile(() => ({ ...updatedUser }));
+                              setGlobalUser(() => ({ ...updatedUser }));
+                              console.log(`📝 [${platform.toUpperCase()}] User contexts updated`);
+                            }, platform === 'ios' ? 100 : 0);
+                            
+                            // Try Firebase sync in background (will be skipped on iOS)
+                            if (window.firebaseServices?.firestore && user.uid) {
+                              console.log(`📝 [${platform.toUpperCase()}] Syncing bio to Firebase...`);
+                              window.firebaseServices.firestore.updateUserProfile(user.uid, { bio: appState.tempBio })
+                                .then(() => console.log(`📝 [${platform.toUpperCase()}] Bio synced to Firebase`))
+                                .catch(err => console.log('Firebase bio sync failed:', err));
+                            } else {
+                              console.log(`📝 [${platform.toUpperCase()}] Skipping Firebase sync (offline mode)`);
+                            }
+                            
+                            // Close bio editor
                             updateState({ 
                               editingBio: false, 
                               tempBio: '', 
                               savedBio: appState.tempBio,
-                              onboardingStep: 1 // Reset to prevent onboarding loop
+                              onboardingStep: 1
                             });
+                            
+                            console.log(`📝 [${platform.toUpperCase()}] Bio saved and modal closed`);
                           }}
                           style={{
                             background: '#4CAF50',
@@ -5929,10 +6424,14 @@ if (!appState.showAddItem) {
                             padding: '8px 16px',
                             fontSize: '14px',
                             cursor: 'pointer',
-                            fontWeight: 'bold'
+                            fontWeight: 'bold',
+                            minHeight: '36px',
+                            minWidth: '80px',
+                            touchAction: 'manipulation',
+                            WebkitTapHighlightColor: 'transparent'
                           }}
                         >
-                          ✅ Save & Close
+                          Save
                         </button>
                       </div>
                     </div>
@@ -6078,16 +6577,26 @@ if (!appState.showAddItem) {
 
               <button
                 onClick={async () => {
-                  await signOut();
-                  // Also reset global app state
-                  setGlobalUser(null);
-                  // Reset app state including onboarding step
-                  updateState({ 
-                    onboardingStep: 1,
-                    editingBio: false,
-                    tempBio: '',
-                    savedBio: ''
-                  });
+                  try {
+                    const result = await signOut();
+                    if (result.success) {
+                      // Also reset global app state
+                      setGlobalUser(null);
+                      // Reset app state including onboarding step
+                      updateState({ 
+                        onboardingStep: 1,
+                        editingBio: false,
+                        tempBio: '',
+                        savedBio: ''
+                      });
+                    } else {
+                      console.error('❌ Sign out failed:', result.error);
+                      alert('Sign out failed: ' + (result.error || 'Unknown error'));
+                    }
+                  } catch (error) {
+                    console.error('❌ Sign out failed:', error);
+                    alert('Sign out failed. Please try again.');
+                  }
                 }}
                 style={{
                   width: '100%',
@@ -6122,9 +6631,11 @@ if (!appState.showAddItem) {
           top: 'max(0px, env(safe-area-inset-top))',
           left: 0,
           right: 0,
-          bottom: 0,
+          bottom: /android/i.test(navigator.userAgent) || window.Capacitor?.getPlatform?.() === 'android' 
+            ? '75px' // Leave room for bottom nav on Android
+            : '60px', // Leave room for bottom nav on iOS
           background: 'white',
-          zIndex: 99999,
+          zIndex: 999,
           display: 'flex',
           flexDirection: 'column'
         }}>
@@ -6248,22 +6759,8 @@ if (!appState.showAddItem) {
               value={appState.newMessage}
               onChange={(e) => updateState({ newMessage: e.target.value })}
               onKeyPress={(e) => {
-                if (e.key === 'Enter' && appState.newMessage.trim()) {
-                  const newMsg = {
-                    id: `msg_${Date.now()}`,
-                    sender_id: user?.id || 'user123',
-                    sender_name: user?.username || 'You',
-                    text: appState.newMessage.trim(),
-                    timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                  };
-                  
-                  updateState({
-                    newMessage: '',
-                    activeChat: {
-                      ...appState.activeChat,
-                      messages: [...(appState.activeChat.messages || []), newMsg]
-                    }
-                  });
+                if (e.key === 'Enter') {
+                  sendMessage(appState.newMessage);
                 }
               }}
               style={{
@@ -6277,23 +6774,7 @@ if (!appState.showAddItem) {
             />
             <button
               onClick={() => {
-                if (appState.newMessage.trim()) {
-                  const newMsg = {
-                    id: `msg_${Date.now()}`,
-                    sender_id: user?.id || 'user123',
-                    sender_name: user?.username || 'You',
-                    text: appState.newMessage.trim(),
-                    timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                  };
-                  
-                  updateState({
-                    newMessage: '',
-                    activeChat: {
-                      ...appState.activeChat,
-                      messages: [...(appState.activeChat.messages || []), newMsg]
-                    }
-                  });
-                }
+                sendMessage(appState.newMessage);
               }}
               disabled={!appState.newMessage.trim()}
               style={{
@@ -6348,7 +6829,7 @@ if (!appState.showAddItem) {
           </div>
           
           <div style={{ flex: 1, overflow: 'auto' }}>
-            {sampleChats.length === 0 ? (
+            {appState.chats.length === 0 ? (
               <div style={{
                 padding: '60px 20px',
                 textAlign: 'center',
@@ -6359,10 +6840,10 @@ if (!appState.showAddItem) {
                 <p>Start swiping to connect with sellers!</p>
               </div>
             ) : (
-              sampleChats.map((chat, i) => (
+              appState.chats.map((chat, i) => (
                 <div
                   key={i}
-                  onClick={() => updateState({ activeChat: chat })}
+                  onClick={() => openChat(chat)}
                   style={{
                     padding: '15px 20px',
                     borderBottom: '1px solid #eee',
@@ -6439,16 +6920,20 @@ if (!appState.showAddItem) {
                 }}
               >
                 <img
-                  src={userProfile?.photoURL || user?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(userProfile?.displayName || user?.name || user?.displayName || user?.email || 'User')}&background=667eea&color=white&size=80`}
+                  key={`seller-profile-photo-${userProfile?.photoUpdatedAt || user?.photoUpdatedAt || appState.lastPhotoUpdate || appState.forcePhotoRefresh || 'default'}`}
+                  src={userProfile?.photoURL || userProfile?.avatar_url || user?.photoURL || user?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(userProfile?.displayName || user?.name || user?.displayName || user?.email || 'User')}&background=667eea&color=white&size=120`}
                   alt="Profile"
                   style={{
-                    width: '80px',
-                    height: '80px',
+                    width: '120px',
+                    height: '120px',
                     borderRadius: '50%',
                     objectFit: 'cover',
                     border: '2px solid #667eea',
-                    opacity: appState.uploadingPhoto ? 0.7 : 1
+                    opacity: appState.uploadingPhoto ? 0.7 : 1,
+                    display: 'block'
                   }}
+                  onLoad={() => console.log('📷 [ANDROID] Seller mode image loaded successfully')}
+                  onError={(e) => console.log('📷 [ANDROID] Seller mode image failed to load:', e)}
                 />
                 <div style={{
                   position: 'absolute',
@@ -6501,10 +6986,35 @@ if (!appState.showAddItem) {
                       
                       console.log('📷 Photo update - setting user with onboardingComplete:', updatedUser.onboardingComplete);
                       
-                      // Update state immediately for both auth context and global
-                      setUser(updatedUser);
-                      setUserProfile(updatedUser);
-                      setGlobalUser(updatedUser);
+                      // Update state immediately for both auth context and global - force updates
+                      setUser(() => updatedUser);
+                      setUserProfile(() => updatedUser);
+                      setGlobalUser(() => updatedUser);
+                      
+                      // Force a re-render by updating app state
+                      updateState(prevState => ({ 
+                        ...prevState,
+                        photoUploadMessage: 'Photo saved!',
+                        lastPhotoUpdate: Date.now(),
+                        forcePhotoRefresh: Math.random()
+                      }));
+                      
+                      // Double-check the image is showing
+                      setTimeout(() => {
+                        setUser(prev => ({ ...updatedUser }));
+                        setUserProfile(prev => ({ ...updatedUser }));
+                        setGlobalUser(prev => ({ ...updatedUser }));
+                      }, 100);
+                      
+                      // Also try to save to Firebase Firestore for cross-device sync
+                      if (window.firebaseServices?.firestore && user.uid) {
+                        try {
+                          await window.firebaseServices.firestore.updateUserProfile(user.uid, { photoURL: imageUrl });
+                          console.log('📷 Photo saved to Firebase for cross-device sync');
+                        } catch (error) {
+                          console.log('📷 Firebase profile save failed (offline mode):', error.message);
+                        }
+                      }
                       
                       console.log('📷 Photo updated successfully');
                     };
@@ -6514,7 +7024,15 @@ if (!appState.showAddItem) {
                     updateState({ uploadingPhoto: true });
                     
                     try {
-                      console.log('📷 Attempting background upload to Firebase...');
+                      const platform = window.Capacitor?.getPlatform?.() || 'web';
+                      
+                      // Skip Firebase upload on iOS  
+                      if (platform === 'ios') {
+                        console.log('📷 [IOS] Skipping Firebase Storage upload - iOS offline mode');
+                        return;
+                      }
+                      
+                      console.log(`📷 [${platform.toUpperCase()}] Attempting background upload to Firebase...`);
                       const { initializeFirebaseServices, getStorageService } = await import('./services/firebase');
                       initializeFirebaseServices();
                       const storageService = getStorageService();
@@ -6532,9 +7050,44 @@ if (!appState.showAddItem) {
                       
                       if (result.success) {
                         // SUCCESS: Update to use Firebase URL 
-                        const updatedUser = { ...user, avatar_url: result.url };
-                        setGlobalUser(updatedUser);
-                        console.log('✅ Background upload successful:', result.url);
+                        console.log('✅ [ANDROID DEBUG] Seller mode Firebase upload successful:', result.url);
+                        
+                        // Get current user data and update with Firebase URL
+                        const currentUser = JSON.parse(localStorage.getItem('swipecity_demo_user') || '{}');
+                        const updatedUserWithFirebaseURL = { 
+                          ...currentUser, 
+                          photoURL: result.url, // Use Firebase URL instead of data URL
+                          avatar_url: result.url,
+                          photoUpdatedAt: Date.now()
+                        };
+                        
+                        // Save updated user with Firebase URL
+                        localStorage.setItem('swipecity_demo_user', JSON.stringify(updatedUserWithFirebaseURL));
+                        const userKey = `swipecity_user_${updatedUserWithFirebaseURL.email.replace(/[@+.]/g, '_')}`;
+                        localStorage.setItem(userKey, JSON.stringify(updatedUserWithFirebaseURL));
+                        
+                        console.log('✅ [ANDROID DEBUG] Seller mode updated user with Firebase URL saved to localStorage');
+                        
+                        // Update ALL state contexts with Firebase URL
+                        setUser({...updatedUserWithFirebaseURL});
+                        setUserProfile({...updatedUserWithFirebaseURL});
+                        setGlobalUser({...updatedUserWithFirebaseURL});
+                        
+                        console.log('✅ [ANDROID DEBUG] Seller mode all state contexts updated with Firebase URL');
+                        
+                        // Also save Firebase URL to Firestore for cross-device sync
+                        if (window.firebaseServices?.firestore && user.uid) {
+                          try {
+                            await window.firebaseServices.firestore.updateUserProfile(user.uid, { 
+                              photoURL: result.url,
+                              avatar_url: result.url 
+                            });
+                            console.log('✅ [ANDROID DEBUG] Seller mode Firebase URL also saved to Firestore');
+                          } catch (error) {
+                            console.log('⚠️ [ANDROID DEBUG] Seller mode failed to save Firebase URL to Firestore:', error.message);
+                          }
+                        }
+                        
                         updateState({ photoUploadMessage: 'Photo synced to cloud!' });
                         setTimeout(() => updateState({ photoUploadMessage: null }), 2000);
                       } else {
@@ -6601,33 +7154,90 @@ if (!appState.showAddItem) {
                     <div style={{ display: 'flex', gap: '8px', marginTop: '8px', justifyContent: 'center' }}>
                       <button
                         onClick={() => {
-                          // Save bio to localStorage (preserve onboarding status)
+                          // Close without saving
+                          updateState({ 
+                            editingBio: false, 
+                            tempBio: ''
+                          });
+                        }}
+                        style={{
+                          background: '#f44336',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '6px',
+                          padding: '8px 16px',
+                          fontSize: '14px',
+                          cursor: 'pointer',
+                          fontWeight: 'bold',
+                          minHeight: '36px',
+                          minWidth: '80px',
+                          touchAction: 'manipulation',
+                          WebkitTapHighlightColor: 'transparent'
+                        }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={() => {
+                          const platform = window.Capacitor?.getPlatform?.() || 'web';
+                          console.log(`📝 [${platform.toUpperCase()}] Seller mode bio save clicked!`);
+                          console.log(`📝 [${platform.toUpperCase()}] Current tempBio:`, appState.tempBio);
+                          
+                          // Get ALL user data
                           const currentUser = JSON.parse(localStorage.getItem('swipecity_demo_user') || '{}');
+                          console.log(`📝 [${platform.toUpperCase()}] Current user from localStorage:`, currentUser.email);
+                          
                           const updatedUser = { 
-                            ...currentUser, 
+                            ...currentUser,
+                            ...user, // Merge with context user
                             bio: appState.tempBio,
-                            // Force onboarding complete to prevent going back to onboarding
-                            onboardingComplete: true
+                            onboardingComplete: true,
+                            bioUpdatedAt: Date.now()
                           };
+                          
+                          console.log(`📝 [${platform.toUpperCase()}] Updated user bio:`, updatedUser.bio);
+                          
+                          // Save to ALL localStorage keys
                           localStorage.setItem('swipecity_demo_user', JSON.stringify(updatedUser));
-                          // Also save to user-specific key for persistence across logins
-                          const userKey = `swipecity_user_${updatedUser.email.replace(/[@+.]/g, '_')}`;
-                          localStorage.setItem(userKey, JSON.stringify(updatedUser));
+                          localStorage.setItem('swipecity_mock_user', JSON.stringify(updatedUser));
+                          localStorage.setItem('swipecity_user', JSON.stringify(updatedUser));
                           
-                          console.log('📝 Bio update (2nd) - setting user with onboardingComplete:', updatedUser.onboardingComplete);
+                          if (updatedUser.email) {
+                            const userKey = `swipecity_user_${updatedUser.email.replace(/[@+.]/g, '_')}`;
+                            localStorage.setItem(userKey, JSON.stringify(updatedUser));
+                            console.log(`📝 [${platform.toUpperCase()}] Bio saved to user-specific key:`, userKey);
+                          }
                           
-                          // Also update user state immediately (both auth context and global)
-                          setUser(updatedUser);
-                          setUserProfile(updatedUser);
-                          setGlobalUser(updatedUser);
+                          console.log(`📝 [${platform.toUpperCase()}] Bio saved to localStorage`);
                           
-                          // Close bio editor and reset onboarding step
+                          // Force update ALL state contexts with delay for iOS
+                          setTimeout(() => {
+                            console.log(`📝 [${platform.toUpperCase()}] Updating user contexts...`);
+                            setUser(() => ({ ...updatedUser }));
+                            setUserProfile(() => ({ ...updatedUser }));
+                            setGlobalUser(() => ({ ...updatedUser }));
+                            console.log(`📝 [${platform.toUpperCase()}] User contexts updated`);
+                          }, platform === 'ios' ? 100 : 0);
+                          
+                          // Try Firebase sync in background (will be skipped on iOS)
+                          if (window.firebaseServices?.firestore && user.uid) {
+                            console.log(`📝 [${platform.toUpperCase()}] Syncing bio to Firebase...`);
+                            window.firebaseServices.firestore.updateUserProfile(user.uid, { bio: appState.tempBio })
+                              .then(() => console.log(`📝 [${platform.toUpperCase()}] Bio synced to Firebase`))
+                              .catch(err => console.log('Firebase bio sync failed:', err));
+                          } else {
+                            console.log(`📝 [${platform.toUpperCase()}] Skipping Firebase sync (offline mode)`);
+                          }
+                          
+                          // Close bio editor
                           updateState({ 
                             editingBio: false, 
                             tempBio: '', 
                             savedBio: appState.tempBio,
-                            onboardingStep: 1 // Reset to prevent onboarding loop
+                            onboardingStep: 1
                           });
+                          
+                          console.log(`📝 [${platform.toUpperCase()}] Bio saved and modal closed`);
                         }}
                         style={{
                           background: '#4CAF50',
@@ -6637,10 +7247,14 @@ if (!appState.showAddItem) {
                           padding: '8px 16px',
                           fontSize: '14px',
                           cursor: 'pointer',
-                          fontWeight: 'bold'
+                          fontWeight: 'bold',
+                          minHeight: '36px',
+                          minWidth: '80px',
+                          touchAction: 'manipulation',
+                          WebkitTapHighlightColor: 'transparent'
                         }}
                       >
-                        ✅ Save & Close
+                        Save
                       </button>
                     </div>
                   </div>
@@ -6697,8 +7311,13 @@ if (!appState.showAddItem) {
                   onClick={async () => {
                     try {
                       console.log('👋 Signing out from seller profile...');
-                      await signOut();
-                      console.log('✅ Sign out successful');
+                      const result = await signOut();
+                      if (result.success) {
+                        console.log('✅ Sign out successful');
+                      } else {
+                        console.error('❌ Sign out failed:', result.error);
+                        alert('Sign out failed: ' + (result.error || 'Unknown error'));
+                      }
                     } catch (error) {
                       console.error('❌ Sign out failed:', error);
                       alert('Sign out failed. Please try again.');
@@ -6771,14 +7390,19 @@ if (!appState.showAddItem) {
                   </div>
                 </div>
 
-                {/* Buy Profile Sign Out Button */}
-                <div style={{ marginTop: '15px' }}>
+                {/* Buy Profile Sign Out and Delete Account Buttons */}
+                <div style={{ marginTop: '15px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   <button
                     onClick={async () => {
                       try {
                         console.log('👋 Signing out from buyer profile...');
-                        await signOut();
-                        console.log('✅ Sign out successful');
+                        const result = await signOut();
+                        if (result.success) {
+                          console.log('✅ Sign out successful');
+                        } else {
+                          console.error('❌ Sign out failed:', result.error);
+                          alert('Sign out failed: ' + (result.error || 'Unknown error'));
+                        }
                       } catch (error) {
                         console.error('❌ Sign out failed:', error);
                         alert('Sign out failed. Please try again.');
@@ -6797,6 +7421,43 @@ if (!appState.showAddItem) {
                     }}
                   >
                     👋 Sign Out
+                  </button>
+                  
+                  <button
+                    onClick={async () => {
+                      if (window.confirm('Are you sure you want to delete your account? This action cannot be undone and will permanently delete all your data including messages, saved items, and listings.')) {
+                        try {
+                          console.log('🗑️ Deleting account...');
+                          // Delete user account
+                          if (deleteAccount) {
+                            const deleteResult = await deleteAccount();
+                            if (deleteResult.success) {
+                              console.log('✅ Account deleted successfully');
+                              alert('Your account has been deleted successfully.');
+                              window.location.reload();
+                            } else {
+                              alert('Failed to delete account: ' + (deleteResult.error || 'Please try signing out and back in, then try again.'));
+                            }
+                          }
+                        } catch (error) {
+                          console.error('❌ Account deletion failed:', error);
+                          alert('Failed to delete account. Please try again or contact support.');
+                        }
+                      }
+                    }}
+                    style={{
+                      width: '100%',
+                      background: 'transparent',
+                      color: '#ef4444',
+                      border: '1px solid #ef4444',
+                      borderRadius: '8px',
+                      padding: '10px',
+                      fontWeight: 'bold',
+                      cursor: 'pointer',
+                      fontSize: '13px'
+                    }}
+                  >
+                    🗑️ Delete Account
                   </button>
                 </div>
               </>
@@ -7322,11 +7983,51 @@ if (!appState.showAddItem) {
         currentMode={appState.currentMode}
         onViewChange={(view) => {
           console.log('Changing view to:', view);
-          updateState({ 
-            currentView: view,
-            showChats: view === 'chats',
-            showProfile: view === 'profile'
-          });
+          
+          // DIRECT localStorage chat loading (mode-specific)
+          if (view === 'chats' && user?.email) {
+            try {
+              const mode = appState.currentMode;
+              const userKey = `swipecity_user_${user.email.replace(/[@+.]/g, '_')}`;
+              const storageKey = `${userKey}_${mode}_chats`;
+              const savedData = localStorage.getItem(storageKey);
+              
+              if (savedData) {
+                const savedChats = JSON.parse(savedData);
+                console.log(`LOADED ${mode} CHATS FROM:`, storageKey, 'Count:', savedChats.length);
+                updateState({ 
+                  currentView: view,
+                  showChats: true,
+                  showProfile: view === 'profile',
+                  chats: savedChats
+                });
+              } else {
+                console.log('NO SAVED CHATS, using mock chats');
+                updateState({ 
+                  currentView: view,
+                  showChats: true,
+                  showProfile: view === 'profile',
+                  chats: mockChats
+                });
+                // Save mock chats for next time
+                localStorage.setItem(storageKey, JSON.stringify(mockChats));
+              }
+            } catch (error) {
+              console.error('Failed to load chats:', error);
+              updateState({ 
+                currentView: view,
+                showChats: true,
+                showProfile: view === 'profile',
+                chats: mockChats
+              });
+            }
+          } else {
+            updateState({ 
+              currentView: view,
+              showChats: view === 'chats',
+              showProfile: view === 'profile'
+            });
+          }
         }}
         onModeChange={(mode) => {
           console.log('Changing mode to:', mode);
@@ -7516,4 +8217,174 @@ if (!appState.showAddItem) {
 };
 
 // Export SwipeMarketplace directly - it's wrapped with AuthProvider in AppWrapper.js
-export default SwipeMarketplace;
+// Error boundary to prevent white screen crashes
+class ErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error('❌ React Error Boundary caught error:', error, errorInfo);
+    console.error('❌ Error stack:', error.stack);
+    console.error('❌ Component stack:', errorInfo.componentStack);
+    
+    // Also log to localStorage for debugging on mobile
+    try {
+      const errorLog = {
+        error: error.toString(),
+        stack: error.stack,
+        componentStack: errorInfo.componentStack,
+        timestamp: new Date().toISOString(),
+        userAgent: navigator.userAgent
+      };
+      localStorage.setItem('swipecity_last_error', JSON.stringify(errorLog));
+    } catch (e) {
+      console.error('Failed to save error log:', e);
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{
+          minHeight: '100vh',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          alignItems: 'center',
+          padding: '20px',
+          backgroundColor: '#f8fafc'
+        }}>
+          <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#667eea', marginBottom: '10px' }}>
+            SwipeCity
+          </div>
+          <div style={{ color: '#64748b', marginBottom: '20px', textAlign: 'center' }}>
+            Something went wrong. Please restart the app.
+          </div>
+          <div style={{ display: 'flex', gap: '10px', flexDirection: 'column', alignItems: 'center' }}>
+            <button 
+              onClick={() => {
+                // Clear localStorage and reload
+                localStorage.clear();
+                window.location.reload();
+              }}
+              style={{
+                padding: '12px 24px',
+                backgroundColor: '#667eea',
+                color: 'white',
+                border: 'none',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontSize: '16px'
+              }}
+            >
+              Clear Data & Restart
+            </button>
+            <button 
+              onClick={() => {
+                try {
+                  const errorLog = localStorage.getItem('swipecity_last_error');
+                  if (errorLog) {
+                    const parsed = JSON.parse(errorLog);
+                    alert(`Error Details:\n\n${parsed.error}\n\nTime: ${parsed.timestamp}\n\nStack: ${parsed.stack?.substring(0, 200) || 'N/A'}`);
+                  } else {
+                    alert('No error log found');
+                  }
+                } catch (e) {
+                  alert('Failed to read error log: ' + e.message);
+                }
+              }}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: '#64748b',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '14px'
+              }}
+            >
+              Show Error Details
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+// Wrap the main component with error boundary
+// Auto-recovery from persistent crashes
+const initializeWithRecovery = () => {
+  try {
+    const crashCount = parseInt(localStorage.getItem('swipecity_crash_count') || '0');
+    if (crashCount > 2) {
+      // Clear problematic data
+      const keysToCheck = ['swipecity_native_user', 'swipecity_app_state', 'swipecity_items'];
+      keysToCheck.forEach(key => {
+        try {
+          const value = localStorage.getItem(key);
+          if (value) JSON.parse(value); // Test if parseable
+        } catch {
+          localStorage.removeItem(key);
+        }
+      });
+      localStorage.setItem('swipecity_crash_count', '0');
+    } else {
+      localStorage.setItem('swipecity_crash_count', String(crashCount + 1));
+    }
+  } catch (e) {
+    // Silent recovery
+  }
+};
+
+// Initialize recovery before app starts
+if (typeof window !== 'undefined') {
+  initializeWithRecovery();
+  
+  // Auto-create demo user for first-time users
+  const initializeDemoUser = () => {
+    const hasUser = localStorage.getItem('swipecity_user') || 
+                    localStorage.getItem('swipecity_native_user') || 
+                    localStorage.getItem('swipecity_demo_user');
+    
+    if (!hasUser) {
+      const demoUser = {
+        uid: 'demo_user_' + Date.now(),
+        email: 'demo@swipecity.app',
+        displayName: 'Demo User',
+        emailVerified: true,
+        photoURL: null,
+        onboardingComplete: true,
+        bio: 'Demo user',
+        created_at: Date.now(),
+        verified: true
+      };
+      
+      localStorage.setItem('swipecity_demo_user', JSON.stringify(demoUser));
+      
+      // Trigger auth listeners
+      if (window.setGlobalUser) {
+        window.setGlobalUser(demoUser);
+      }
+    }
+  };
+  
+  // Initialize demo user if needed
+  setTimeout(initializeDemoUser, 100);
+}
+
+const App = () => (
+  <ErrorBoundary>
+    <SwipeMarketplace />
+  </ErrorBoundary>
+);
+
+export default App;

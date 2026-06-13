@@ -1,58 +1,51 @@
-# SwipeCity Development Setup - v2.0
+# SwipeCity — Agent Brief
 
-## Project Structure
-- **Main App**: `/Users/jaredf/Desktop/swipecity-mobile/apps/web/src/App.js`
-- **iOS Build**: `/Users/jaredf/Desktop/swipecity-mobile/ios/App/`
-- **Android Build**: `/Users/jaredf/Desktop/swipecity-mobile/android/`
-- **Working Directory**: `/Users/jaredf/Desktop/swipecity-mobile`
+> This file is standing instructions for how to work on SwipeCity. It is NOT a status log.
+> Current state lives in git history and in PROGRESS.md. Read those for "what's done."
 
-## Quick Development Commands
-```bash
-# Build web app and sync to mobile
-cd /Users/jaredf/Desktop/swipecity-mobile
-npm run build:web && npx cap sync
+## Who I am, how to work with me
+- I'm the product owner. I have strong product/UX judgment but I'm **not a developer**.
+- Explain every change in terms of **user-facing behavior first**. Technical detail only if I ask, or if I need it to make a decision.
+- Before doing anything non-trivial, tell me **what could break** and **what's hard to undo**.
+- When you finish a change, show me: (1) what a user will now experience differently, (2) how to see it myself, (3) anything I now need to test.
+- Default to the **simplest version that tests the idea**. Don't gold-plate. If you're tempted to build something elaborate, propose the minimal version first and let me choose.
 
-# Open platforms
-npx cap open ios      # iOS in Xcode
-npx cap open android  # Android in Android Studio
+## What SwipeCity is
+A Tinder-style local marketplace. Users swipe through nearby items, chat with sellers, and manage their own listings. Buyer mode and seller mode. The core loop that has to feel great: **swipe → match/interest → chat → transact.**
 
-# Start dev server (for web testing)
-npm run dev:web
-```
+**Target user:** Facebook Marketplace buyers — people comfortable buying secondhand/local online who are frustrated with how clunky and sloppy Marketplace feels.
 
-## Recent Major Updates (Session Complete)
-- **Real Images**: Successfully implemented real Unsplash images for performance testing
-- **Data Seeding**: 200+ realistic marketplace listings with real seller data
-- **Performance**: Tested and optimized for mobile - good performance on iPhone
-- **Animations**: Always-on swipe animations (removed toggle option per user request)
-- **Admin Dashboard**: Full data management with clear/reseed functionality
-- **Cross-platform**: iOS working perfectly, Android ready for testing
+**Thesis:** Marketplace's interface is bad. If we combine the addictive, highly interactive feel of dating-app swiping (Tinder) with local commerce, browsing becomes something people *want* to do. The interface is our wedge against an incumbent that wins on inventory but loses on experience.
 
-## Firebase Configuration
-- **Project**: `swipecity-marketplace` (existing Firebase project)
-- **Environment**: Development/Pre-production
-- **Data**: Seeded with realistic marketplace data and real images
+**What this means for how we build:**
+- The swipe experience is our hook — it must feel noticeably better and more fun than scrolling Marketplace. Polish here is core, not cosmetic.
+- BUT addictiveness has to funnel into transactions, not just engagement. Swiping that produces zero purchases kills the marketplace (sellers leave). Always weight the loop toward swipe → **chat → transact**, not swiping for its own sake.
+- Our weakness vs. Marketplace is **liquidity** (they already have the buyers and sellers). A beautiful interface over empty inventory still fails. Favor anything that helps inventory feel dense and local. Be skeptical of features that add engagement but not transactions or supply.
 
-## Current Status - Ready for Next Session
-✅ Real images working (Unsplash URLs by category)
-✅ Performance tested on iPhone - good results
-✅ Animations permanently enabled and working well
-✅ Admin dashboard fully functional
-✅ Data seeding system complete
-✅ iOS deployment successful
+> [Still open / to decide: launch city and starting category. The interface advantage only shows up where inventory is dense enough that swiping surfaces real items. Pick one city + one category to start.]
 
-## Next Session Tasks (Prioritized)
-1. **Android Testing**: `npx cap open android` - test performance, UI, and features
-2. **Production Firebase**: Set up separate production environment
-3. **App Store Prep**: Screenshots, metadata, submission requirements
+## How to reason about improvements (do this when I ask "what should we work on")
+1. State the **user problem**, not the feature. ("Sellers lose buyers because chat is slow to load" — not "add a loading spinner.")
+2. Rank by **impact on the core loop** above. Things that make swipe→chat→transact smoother beat everything else.
+3. For each item give: the user problem, the simplest fix, the effort (small/medium/large), and what could break.
+4. Flag anything that touches money, trust, or first-run experience as **high stakes** — those make or break a marketplace.
+5. Present the ranked list and **stop**. Let me pick before you build.
 
-## Session Restart Commands
-```bash
-cd /Users/jaredf/Desktop/swipecity-mobile
-# Continue with Android testing or production setup
-```
+## Architecture (so you don't have to rediscover it each session)
+- **One codebase**: React web app in `apps/web/src/`. Main entry: `apps/web/src/App.js`.
+- **Capacitor** wraps the web app into native iOS (`/ios`) and Android (`/android`) shells. Most work happens in `apps/web/src/` — the native shells rarely change.
+- **Firebase** is the backend: Auth (email passwordless), Firestore (data + chat), Storage (images), FCM (push).
+- Build + push to mobile: `npm run build:web && npx cap sync`, then `npx cap open ios` / `npx cap open android`.
 
-## Key Files Modified This Session
-- `/apps/web/src/utils/dataSeeding.js` - Real image generation
-- `/apps/web/src/App.js` - Removed animation toggle, enhanced debugging
-- `/apps/web/src/utils/dataIntegration.js` - Enhanced data clearing and loading
+## Guardrails — flag and WAIT for my explicit go-ahead before touching:
+- **Firebase security rules** (`firestore.rules`, `storage.rules`) — a mistake here can expose user data or lock everyone out.
+- **`.env` / any credentials / API keys** — never print these, never commit them, never change them silently.
+- **Deployment scripts** (`deploy.sh`) and anything that submits to the App Store / Play Store.
+- **Anything that regenerates the native iOS/Android shells** — this is where a non-dev most easily ends up with a broken build. Warn me, explain why it's needed, and walk me through it.
+- **Data seeding / clearing** in any environment that isn't obviously throwaway dev data.
+
+## Known open issue (move resolved items out of here)
+- iOS *seller-mode* chat messages don't sync to Android. Buyer mode and same-device work fine. Edge case, not blocking, but relevant if we touch chat sync.
+
+## Things to verify, don't assume
+- The README and old notes claim "production ready." Treat that as unverified. When it matters, check the actual code or ask me to test, rather than trusting a doc that says "✅ complete."

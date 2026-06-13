@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { X, Mail, Lock, User, Eye, EyeOff, AlertCircle } from 'lucide-react';
-import { useAuth } from '../contexts/AuthContext-simple';
+import { useAuth } from '../contexts/AuthContextNative';
 
 const AuthModal = ({ isOpen, onClose }) => {
   const { signIn, signUp, signInWithGoogle, resetPassword, error: authError } = useAuth();
@@ -89,10 +89,32 @@ const AuthModal = ({ isOpen, onClose }) => {
         console.log('🔐 Attempting sign in...');
         result = await signIn(formData.email, formData.password);
         console.log('🔐 Sign in completed:', result);
+        
+        // DEBUG: Signal successful auth to main app
+        if (result && result.uid) {
+          window.authModalUser = result;
+          console.log('🔐 Set window.authModalUser for sync:', result.email);
+        }
       } else if (mode === 'signup') {
         console.log('📝 Attempting sign up with email:', formData.email);
         console.log('📝 Display name:', formData.displayName);
-        result = await signUp(formData.email, formData.password, formData.displayName);
+        console.log('📝 Password length:', formData.password?.length);
+        console.log('📝 signUp function exists:', typeof signUp);
+        console.log('📝 About to call signUp function...');
+        
+        try {
+          result = await signUp(formData.email, formData.password, formData.displayName);
+          console.log('📝 Sign up call completed successfully');
+          console.log('📝 Sign up result:', result);
+        } catch (signUpError) {
+          console.error('📝 signUp function threw error:', signUpError);
+          console.error('📝 signUp error type:', typeof signUpError);
+          console.error('📝 signUp error name:', signUpError?.name);
+          console.error('📝 signUp error message:', signUpError?.message);
+          console.error('📝 signUp error stack:', signUpError?.stack);
+          throw signUpError; // Re-throw to be caught by outer catch
+        }
+        
         console.log('📝 Sign up completed:', result);
       } else if (mode === 'forgot') {
         console.log('🔄 Attempting password reset...');

@@ -6,12 +6,22 @@ const config: CapacitorConfig = {
   webDir: 'apps/web/build',
   server: {
     cleartext: true,
-    allowNavigation: ['*']
+    allowNavigation: [
+      '*',
+      'https://firebasestorage.googleapis.com',
+      'https://*.googleapis.com',
+      'https://storage.googleapis.com'
+    ]
   },
   ios: {
     scheme: 'SwipeCity',
     contentInset: 'automatic',
-    backgroundColor: '#4F6EF7'
+    backgroundColor: '#4F6EF7',
+    allowsLinkPreview: false,
+    scrollEnabled: true,
+    webSecurity: true,
+    allowsInlineMediaPlayback: true,
+    allowsBackForwardNavigationGestures: true
   },
   plugins: {
     SplashScreen: {

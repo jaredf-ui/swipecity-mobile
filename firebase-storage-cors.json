@@ -1,0 +1,20 @@
+[
+  {
+    "origin": [
+      "capacitor://localhost",
+      "http://localhost:*",
+      "https://localhost:*",
+      "ionic://localhost",
+      "*"
+    ],
+    "method": ["GET", "HEAD", "PUT", "POST", "DELETE"],
+    "maxAgeSeconds": 3600,
+    "responseHeader": [
+      "Content-Type",
+      "x-goog-resumable",
+      "Access-Control-Allow-Origin",
+      "Access-Control-Allow-Methods",
+      "Access-Control-Allow-Headers"
+    ]
+  }
+]

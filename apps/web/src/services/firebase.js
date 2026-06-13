@@ -36,6 +36,15 @@ const storage = getStorage(app);
 
 // Auth Service
 class AuthService {
+  constructor() {
+    this.auth = auth; // Expose the Firebase auth instance
+  }
+  
+  // Set up auth state listener
+  onAuthStateChanged(callback) {
+    return onAuthStateChanged(this.auth, callback);
+  }
+  
   // Register new user with email and password
   async registerWithEmailPassword(email, password, displayName) {
     try {
@@ -363,6 +372,74 @@ class FirestoreService {
     }
   }
 
+  // Get user profile by UID
+  async getUserProfile(userId) {
+    try {
+      const userDoc = await getDoc(doc(db, 'users', userId));
+      if (userDoc.exists()) {
+        const data = userDoc.data();
+        console.log('📱 User profile loaded from Firestore:', userId);
+        return data;
+      } else {
+        console.log('📱 No user profile found in Firestore for:', userId);
+        return null;
+      }
+    } catch (error) {
+      console.error('Get user profile error:', error);
+      return null;
+    }
+  }
+
+  // Update or create user profile
+  async updateUserProfile(userId, profileData) {
+    try {
+      await setDoc(doc(db, 'users', userId), {
+        ...profileData,
+        updated_at: Date.now()
+      }, { merge: true }); // Use merge to update existing fields without overwriting the entire document
+      console.log('✅ User profile updated in Firestore:', userId);
+      return { success: true };
+    } catch (error) {
+      console.error('Update user profile error:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // Save user chats to Firestore
+  async saveUserChats(userId, mode, chats) {
+    try {
+      const chatData = {
+        [`${mode}_chats`]: chats,
+        updated_at: Date.now()
+      };
+      await setDoc(doc(db, 'users', userId), chatData, { merge: true });
+      console.log(`✅ ${mode} chats saved to Firestore for user:`, userId);
+      return { success: true };
+    } catch (error) {
+      console.error('Save user chats error:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // Load user chats from Firestore
+  async loadUserChats(userId, mode) {
+    try {
+      const userDoc = await getDoc(doc(db, 'users', userId));
+      if (userDoc.exists()) {
+        const data = userDoc.data();
+        const chats = data[`${mode}_chats`] || [];
+        console.log(`📱 ${mode} chats loaded from Firestore:`, chats.length, 'chats');
+        return chats;
+      } else {
+        console.log(`📱 No ${mode} chats found in Firestore for:`, userId);
+        return [];
+      }
+    } catch (error) {
+      console.error('Load user chats error:', error);
+      return [];
+    }
+  }
+
   // Items/Listings
   async addItem(itemData) {
     try {
@@ -558,6 +635,13 @@ export const initializeFirebaseServices = () => {
       };
       
       console.log('✅ Firebase services initialized successfully');
+      console.log('🔥 Firebase config:', {
+        projectId: firebaseConfig.projectId,
+        authDomain: firebaseConfig.authDomain,
+        hasAuth: !!auth,
+        hasFirestore: !!db,
+        hasStorage: !!storage
+      });
     } catch (error) {
       console.error('❌ Failed to initialize Firebase services:', error);
       throw error;

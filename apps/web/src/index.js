@@ -2,7 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './index.css';
 import reportWebVitals from './reportWebVitals';
-import { AuthProvider } from './contexts/AuthContext-simple';
+import { AuthProvider } from './contexts/AuthContextNative';
 
 // Import the main app
 import App from './App';
