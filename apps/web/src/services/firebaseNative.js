@@ -225,6 +225,61 @@ export class FirebaseNativeService {
   }
 
   /**
+   * Permanently delete the current user's account: their Firestore profile
+   * document and their Firebase Auth (email/password) credential. Without the
+   * auth deletion the email stays registered, so re-signup fails with
+   * EMAIL_EXISTS even after local data and the profile doc are cleared.
+   */
+  async deleteAccount() {
+    try {
+      // accounts:delete rejects stale tokens — make sure ours is fresh first.
+      await this.ensureValidToken();
+
+      if (!this.idToken) {
+        return { success: false, error: 'No authenticated user to delete' };
+      }
+
+      const uid = this.currentUser?.uid;
+
+      // Best-effort: remove the Firestore profile document.
+      if (uid) {
+        try {
+          await nativeHttp.delete(`${this.firestoreUrl}/users/${uid}?key=${this.apiKey}`, {
+            headers: { 'Authorization': `Bearer ${this.idToken}` }
+          });
+          console.log('[Firebase Auth] User profile document deleted');
+        } catch (firestoreError) {
+          console.error('[Firebase Auth] Firestore profile deletion failed:', firestoreError);
+          // Continue — deleting the auth credential is what unblocks re-signup.
+        }
+      }
+
+      // Delete the Auth account itself.
+      const response = await nativeHttp.post(`${this.authUrl}:delete?key=${this.apiKey}`, {
+        idToken: this.idToken
+      });
+
+      if (!response.ok) {
+        const errorMessage = response.data?.error?.message || `Account deletion failed (Status: ${response.status})`;
+        console.error('[Firebase Auth] Delete account failed:', errorMessage);
+        return { success: false, error: errorMessage };
+      }
+
+      // Clear all auth state so the app drops to a signed-out state.
+      this.currentUser = null;
+      this.idToken = null;
+      this.refreshToken = null;
+      localStorage.removeItem('swipecity_native_tokens');
+
+      console.log('[Firebase Auth] ✅ Account deleted');
+      return { success: true };
+    } catch (error) {
+      console.error('[Firebase Auth] Delete account error:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
    * Refresh ID token using refresh token
    */
   async refreshIdToken() {

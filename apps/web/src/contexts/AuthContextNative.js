@@ -278,24 +278,17 @@ export const AuthProvider = ({ children }) => {
         return { success: false, error: 'No user logged in' };
       }
 
-      // Delete user data from Firestore if available
-      if (window.firebaseServices?.firestore) {
-        try {
-          // Delete user profile
-          await window.firebaseServices.firestore.deleteUserData(user.uid);
-          console.log('✅ User data deleted from Firestore');
-        } catch (dbError) {
-          console.error('Error deleting Firestore data:', dbError);
-          // Continue with account deletion even if Firestore deletion fails
-        }
+      // Delete the Firestore profile document AND the Firebase Auth credential.
+      // The native layer talks to Firebase over REST, so there is no
+      // auth.currentUser.delete() — firebaseNative.deleteAccount() calls the
+      // REST accounts:delete endpoint. This is what actually frees the email so
+      // the same credentials can be used to create a new account afterwards.
+      const authDeleteResult = await firebaseNative.deleteAccount();
+      if (!authDeleteResult.success) {
+        console.error('❌ Failed to delete account:', authDeleteResult.error);
+        return { success: false, error: authDeleteResult.error || 'Failed to delete account' };
       }
-
-      // Delete the Firebase auth account
-      const currentUser = firebaseNative.auth?.currentUser;
-      if (currentUser) {
-        await currentUser.delete();
-        console.log('✅ Firebase auth account deleted');
-      }
+      console.log('✅ Firebase auth account deleted');
 
       // Clear all local storage
       const keys = Object.keys(localStorage);

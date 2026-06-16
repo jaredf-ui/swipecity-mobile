@@ -1374,9 +1374,10 @@ const handleSwipe = useCallback((direction) => {
       return;
     }
     
-    // Check daily swipe limit before processing swipe
-    if (appState.dailySwipeCount >= appState.maxDailySwipes) {
-      console.log('🚫 Daily swipe limit reached');
+    // Daily limit applies to interests (right swipes / likes) only — passing
+    // (left swipe) is free browsing and never counts toward the daily limit.
+    if (direction === 'right' && appState.dailySwipeCount >= appState.maxDailySwipes) {
+      console.log('🚫 Daily interest limit reached');
       updateState({ showLimitModal: true, limitModalType: 'swipes' });
       return;
     }
@@ -1429,12 +1430,13 @@ const handleSwipe = useCallback((direction) => {
     
     const nextIndex = appState.currentItemIndex < items.length - 1 ? appState.currentItemIndex + 1 : 0;
     
-    // Increment daily swipe count for both left and right swipes
-    updateState({ 
+    // Only interests (right swipes / likes) count toward the daily limit.
+    // Passing is unlimited, so signed-out browsing never burns the daily count.
+    updateState({
       currentItemIndex: nextIndex,
       lastPassedItem: direction === 'left' ? currentItem : null,
       canUndo: direction === 'left',
-      dailySwipeCount: appState.dailySwipeCount + 1
+      dailySwipeCount: direction === 'right' ? appState.dailySwipeCount + 1 : appState.dailySwipeCount
     });
     
     console.log(`✅ Swipe ${direction} recorded (${appState.dailySwipeCount + 1}/${appState.maxDailySwipes} today)`);
@@ -1727,6 +1729,15 @@ const handleDragEnd = useCallback(() => {
       });
     }
   }, [isAuthenticated, appState.hasSeenTutorial, appState.showSwipeTutorial, updateState]);
+
+  // If the user signs out while on an account-only screen (Profile or Chats),
+  // close it and return to the browse feed — otherwise they're left on a
+  // signed-out profile (with "Delete Account") or someone's chat threads.
+  useEffect(() => {
+    if (!isAuthenticated && (appState.showProfile || appState.showChats || appState.activeChat)) {
+      updateState({ showProfile: false, showChats: false, activeChat: null, currentView: 'swipe' });
+    }
+  }, [isAuthenticated, appState.showProfile, appState.showChats, appState.activeChat, updateState]);
 
   // Load user preferences when user changes or settings modal opens
   useEffect(() => {
@@ -7656,7 +7667,16 @@ if (!appState.showAddItem) {
         currentMode={appState.currentMode}
         onViewChange={(view) => {
           console.log('Changing view to:', view);
-          
+
+          // Profile and Chats are account features (messaging, account mgmt) —
+          // require sign-in. When signed out, send the user to the auth modal
+          // instead of showing an empty profile (with a "Delete Account" button
+          // and no account) or other users' chat threads.
+          if ((view === 'profile' || view === 'chats') && !isAuthenticated) {
+            updateState({ showAuthModal: true });
+            return;
+          }
+
           // DIRECT localStorage chat loading (mode-specific)
           if (view === 'chats' && user?.email) {
             try {
@@ -7737,12 +7757,21 @@ if (!appState.showAddItem) {
             return;
           }
 
-          // Show swipe tutorial when entering buy mode for the first time
-          if (mode === 'buyer' && !appState.hasSeenBuyModeTutorial) {
-            updateState({ currentMode: mode, showSwipeTutorial: true });
-          } else {
-            updateState({ currentMode: mode });
-          }
+          // Switching modes should always return to the main browse/feed view.
+          // Clear any open overlay (profile, chats, saved items, my listings) and
+          // reset the view — otherwise coming back from e.g. Profile leaves
+          // showProfile=true and the buyer "Save" button stays hidden.
+          updateState({
+            currentMode: mode,
+            currentView: 'swipe',
+            showProfile: false,
+            showChats: false,
+            activeChat: null,
+            showSavedItems: false,
+            showMyListings: false,
+            // Show swipe tutorial when entering buy mode for the first time
+            showSwipeTutorial: mode === 'buyer' && !appState.hasSeenBuyModeTutorial
+          });
         }}
         onShowTutorial={showSwipeTutorial}
       />
