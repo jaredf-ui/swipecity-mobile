@@ -173,9 +173,16 @@ const setGlobalUser = (user) => {
   globalUser = user;
   
   if (user) {
-    // Store in localStorage for persistence
-    localStorage.setItem('swipecity_user', JSON.stringify(user));
-    
+    // Store in localStorage for persistence. Guarded: a large value (e.g. a
+    // profile-photo data URL) can exceed the WebView's ~5MB quota, and an
+    // uncaught QuotaExceededError here crashes the whole app via the
+    // ErrorBoundary on relaunch. Persistence is best-effort.
+    try {
+      localStorage.setItem('swipecity_user', JSON.stringify(user));
+    } catch (e) {
+      console.warn('[storage] could not persist swipecity_user:', e?.message);
+    }
+
     // Also save to Firebase if the user has an ID
     if (user.id) {
       // Save to Firebase in background (non-blocking)
@@ -1406,18 +1413,14 @@ const addListingPhotos = useCallback(async (fileList, source = 'camera') => {
     });
     setTimeout(() => updateState({ photoUploadMessage: null }), 2000);
 
-    // Then persist locally, best-effort. Quota errors here don't affect display.
-    try {
-      localStorage.setItem('swipecity_demo_user', JSON.stringify(updatedUser));
-      localStorage.setItem('swipecity_user', JSON.stringify(updatedUser));
-      localStorage.setItem('swipecity_native_user', JSON.stringify(updatedUser));
-      if (updatedUser.email) {
-        const userKey = `swipecity_user_${updatedUser.email.replace(/[@+.]/g, '_')}`;
-        localStorage.setItem(userKey, JSON.stringify(updatedUser));
-      }
-    } catch (storageErr) {
-      console.warn('Profile photo saved in-session but not persisted to storage:', storageErr?.message);
-    }
+    // Then persist locally, best-effort. Only the two keys the app actually
+    // restores from (native_user for session restore, user for useAuthState) —
+    // writing the photo data URL into more keys than that just multiplies
+    // storage pressure and risks blowing the ~5MB quota. Quota errors here
+    // don't affect display (state was already set above).
+    const serialized = JSON.stringify(updatedUser);
+    try { localStorage.setItem('swipecity_native_user', serialized); } catch (e) { /* over quota; in-session only */ }
+    try { localStorage.setItem('swipecity_user', serialized); } catch (e) { /* over quota; in-session only */ }
   }, [user, updateState, setUser, setUserProfile]);
 
 const handleSaveForLater = useCallback(() => {

@@ -1,6 +1,19 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import firebaseNative from '../services/firebaseNative';
 
+// Guard every localStorage write. A large value (e.g. a profile-photo data URL)
+// can exceed the WebView's ~5MB quota; an uncaught QuotaExceededError would
+// crash the whole app via the ErrorBoundary. Persistence is best-effort.
+const safeSetLocal = (key, value) => {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch (e) {
+    console.warn('[storage] write skipped for', key, '-', e?.message);
+    return false;
+  }
+};
+
 const AuthContext = createContext({});
 
 export const useAuth = () => {
@@ -51,7 +64,7 @@ export const AuthProvider = ({ children }) => {
 
 
                 // Update with complete data
-                localStorage.setItem('swipecity_native_user', JSON.stringify(completeUserData));
+                safeSetLocal('swipecity_native_user', JSON.stringify(completeUserData));
                 setUser(completeUserData);
                 setUserProfile(completeUserData);
 
@@ -64,7 +77,7 @@ export const AuthProvider = ({ children }) => {
                   (freshProfile.preferences?.cities?.length > 0) ||
                   (freshProfile.preferences?.categories?.length > 0);
                 if (alreadyOnboarded) {
-                  localStorage.setItem('swipecity_onboarding_complete_' + userData.uid, 'true');
+                  safeSetLocal('swipecity_onboarding_complete_' + userData.uid, 'true');
                 }
               }
             } catch (refreshError) {
@@ -108,12 +121,12 @@ export const AuthProvider = ({ children }) => {
       if (result.success) {
         const userData = result.user;
 
-        localStorage.setItem('swipecity_native_user', JSON.stringify(userData));
+        safeSetLocal('swipecity_native_user', JSON.stringify(userData));
         setUser(userData);
         setUserProfile(userData);
 
         // Sync with main app auth context (useAuthState/globalUser).
-        localStorage.setItem('swipecity_user', JSON.stringify(userData));
+        safeSetLocal('swipecity_user', JSON.stringify(userData));
         if (window.setGlobalUser) {
           window.setGlobalUser(userData);
         }
@@ -196,7 +209,7 @@ export const AuthProvider = ({ children }) => {
               freshProfile.onboardingComplete === true ||
               (freshProfile.preferences?.categories?.length > 0);
             if (alreadyOnboarded) {
-              localStorage.setItem('swipecity_onboarding_complete_' + userData.uid, 'true');
+              safeSetLocal('swipecity_onboarding_complete_' + userData.uid, 'true');
             }
           }
         } catch (refreshError) {
@@ -206,12 +219,12 @@ export const AuthProvider = ({ children }) => {
         // Persist + update state. setUser/setGlobalUser update React state
         // reactively, so no page reload is needed (a reload here was the old
         // fragile path that dropped the just-established session).
-        localStorage.setItem('swipecity_native_user', JSON.stringify(completeUserData));
+        safeSetLocal('swipecity_native_user', JSON.stringify(completeUserData));
         setUser(completeUserData);
         setUserProfile(completeUserData);
 
         // Sync with main app auth context (useAuthState/globalUser).
-        localStorage.setItem('swipecity_user', JSON.stringify(completeUserData));
+        safeSetLocal('swipecity_user', JSON.stringify(completeUserData));
         if (window.setGlobalUser) {
           window.setGlobalUser(completeUserData);
         }
@@ -372,7 +385,7 @@ export const AuthProvider = ({ children }) => {
       
       if (success) {
         // Update local state and storage
-        localStorage.setItem('swipecity_native_user', JSON.stringify(updatedProfile));
+        safeSetLocal('swipecity_native_user', JSON.stringify(updatedProfile));
         setUser(updatedProfile);
         setUserProfile(updatedProfile);
         
@@ -384,7 +397,7 @@ export const AuthProvider = ({ children }) => {
       console.error('❌ Failed to save preferences:', error);
       
       // Fallback to localStorage
-      localStorage.setItem('swipecity_native_user', JSON.stringify(updatedProfile));
+      safeSetLocal('swipecity_native_user', JSON.stringify(updatedProfile));
       setUser(updatedProfile);
       setUserProfile(updatedProfile);
       
@@ -399,7 +412,7 @@ export const AuthProvider = ({ children }) => {
     const userKey = `swipecity_native_chats_${user.email.replace(/[@+.]/g, '_')}_${mode}`;
     
     // Always save to localStorage for quick access
-    localStorage.setItem(userKey, JSON.stringify(chats));
+    safeSetLocal(userKey, JSON.stringify(chats));
     
     // Also save to Firebase for cross-device sync
     if (user?.uid) {
@@ -432,7 +445,11 @@ export const AuthProvider = ({ children }) => {
     }
     
     // Otherwise fall back to localStorage
-    return saved ? JSON.parse(saved) : [];
+    try {
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
   };
 
   // Save and like items
@@ -453,7 +470,7 @@ export const AuthProvider = ({ children }) => {
       } catch (error) {
       }
       
-      localStorage.setItem('swipecity_native_user', JSON.stringify(updatedProfile));
+      safeSetLocal('swipecity_native_user', JSON.stringify(updatedProfile));
       setUserProfile(updatedProfile);
     }
     
@@ -477,7 +494,7 @@ export const AuthProvider = ({ children }) => {
       } catch (error) {
       }
       
-      localStorage.setItem('swipecity_native_user', JSON.stringify(updatedProfile));
+      safeSetLocal('swipecity_native_user', JSON.stringify(updatedProfile));
       setUserProfile(updatedProfile);
     }
     
@@ -500,7 +517,7 @@ export const AuthProvider = ({ children }) => {
         
         // Update local profile only if Firebase update succeeded
         const updatedProfile = { ...userProfile, swipeStats: stats };
-        localStorage.setItem('swipecity_native_user', JSON.stringify(updatedProfile));
+        safeSetLocal('swipecity_native_user', JSON.stringify(updatedProfile));
         setUserProfile(updatedProfile);
         
         return { success: true };
@@ -544,7 +561,7 @@ export const AuthProvider = ({ children }) => {
         const updatedProfile = { ...userProfile, photoURL: result.url };
         
         await firebaseNative.updateUserProfile(user.uid, { photoURL: result.url });
-        localStorage.setItem('swipecity_native_user', JSON.stringify(updatedProfile));
+        safeSetLocal('swipecity_native_user', JSON.stringify(updatedProfile));
         setUser(updatedProfile);
         setUserProfile(updatedProfile);
         
