@@ -339,6 +339,7 @@ function getMockItems(filters = {}) {
       image_url: 'https://images.unsplash.com/photo-1556656793-08538906a9f8?w=300&h=300&fit=crop',
       seller_id: 'mock_seller',
       seller_name: 'Sample Seller',
+      city: 'Raleigh, NC',
       created_at: Date.now() - 86400000, // 1 day ago
       category: 'Electronics',
       status: 'active'

@@ -319,6 +319,16 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  // Re-authenticate with password (needed before account deletion once the
+  // login is older than a few minutes — Firebase requires a recent login).
+  const reauthenticate = async (password) => {
+    try {
+      return await firebaseNative.reauthenticate(password);
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  };
+
   // Save preferences
   const savePreferences = async (preferences) => {
     if (!user) {
@@ -539,6 +549,7 @@ export const AuthProvider = ({ children }) => {
     signOut,
     resetPassword,
     deleteAccount,
+    reauthenticate,
     savePreferences,
     saveItem,
     likeItem,

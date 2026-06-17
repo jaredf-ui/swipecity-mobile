@@ -5,6 +5,7 @@ import SkeletonCard from './components/SkeletonCard';
 import { SwipeFeedback, LoadingSpinner, MatchSuccessAnimation } from './components/SwipeFeedback';
 import { DataService } from './utils/dataIntegration';
 import { testImageGeneration } from './utils/dataSeeding';
+import { SUPPORTED_CITIES } from './data/cities';
 // Firebase Auth Integration - Safe version with fallbacks
 import { useAuth } from './contexts/AuthContextNative';
 import AuthModal from './components/AuthModal';
@@ -308,6 +309,7 @@ const SwipeMarketplace = () => {
       needsOnboarding, 
       signOut,
       deleteAccount,
+      reauthenticate,
       saveItem: saveItemToProfile,
       likeItem: likeItemToProfile,
       savePreferences,
@@ -415,6 +417,9 @@ const SwipeMarketplace = () => {
     minPrice: 10,
     maxPrice: 500,
     searchRadius: 15,
+    // Cities the buyer wants to shop in (canonical strings from SUPPORTED_CITIES).
+    // Empty array means "all cities" — the feed shows everything so it's never empty.
+    selectedCities: [],
     conditionPreference: 'any',
     wantDealAlerts: false,
     showSwipeTutorial: false,
@@ -717,8 +722,19 @@ const SwipeMarketplace = () => {
 
   const items = useMemo(() => {
     // Use seeded items if available, otherwise fall back to mockItems
-    const sourceItems = seededItems.length > 0 ? seededItems : mockItems;
-    
+    let sourceItems = seededItems.length > 0 ? seededItems : mockItems;
+
+    // City filter: only show listings in the cities the buyer chose. An empty
+    // selection means "all cities" so the feed is never accidentally empty.
+    // Listings carry their city as either `city` (seller-posted) or `location`
+    // (seeded data) — check both.
+    const cityFilter = appState.selectedCities;
+    if (cityFilter && cityFilter.length > 0) {
+      sourceItems = sourceItems.filter(item =>
+        cityFilter.includes(item.city || item.location)
+      );
+    }
+
     // Load learned swipe preferences
     let swipeData = {};
     if (user?.uid) {
@@ -772,7 +788,7 @@ const SwipeMarketplace = () => {
         };
       })
       .sort((a, b) => (b.algorithmScore || 0) - (a.algorithmScore || 0));
-  }, [user?.preferences?.categories, user?.uid, seededItems]);
+  }, [user?.preferences?.categories, user?.uid, seededItems, appState.selectedCities]);
   const currentItem = items[appState.currentItemIndex] || null;
 
   const updateState = useCallback((updates) => {
@@ -1739,6 +1755,20 @@ const handleDragEnd = useCallback(() => {
     }
   }, [isAuthenticated, appState.showProfile, appState.showChats, appState.activeChat, updateState]);
 
+  // When the buyer changes which cities they shop in, restart the feed from the
+  // top so they don't land mid-list on an empty "you've seen everything" state.
+  useEffect(() => {
+    updateState({ currentItemIndex: 0 });
+  }, [appState.selectedCities, updateState]);
+
+  // Apply the buyer's saved city selection to the feed whenever the user loads,
+  // so their choice is honored on launch (not only after opening Settings).
+  useEffect(() => {
+    if (user?.preferences?.cities) {
+      updateState({ selectedCities: user.preferences.cities });
+    }
+  }, [user?.preferences?.cities, updateState]);
+
   // Load user preferences when user changes or settings modal opens
   useEffect(() => {
     if (user && user.preferences && appState.showSettings) {
@@ -1746,7 +1776,7 @@ const handleDragEnd = useCallback(() => {
         searchKeywords: user.preferences.searchKeywords || appState.searchKeywords,
         minPrice: user.preferences.minPrice || appState.minPrice,
         maxPrice: user.preferences.maxPrice || appState.maxPrice,
-        searchRadius: user.preferences.searchRadius || appState.searchRadius,
+        selectedCities: user.preferences.cities || appState.selectedCities,
         conditionPreference: user.preferences.conditionPreference || appState.conditionPreference,
         wantDealAlerts: user.preferences.wantDealAlerts !== undefined ? user.preferences.wantDealAlerts : appState.wantDealAlerts
       });
@@ -2144,10 +2174,24 @@ if (!appState.showAddItem) {
 
   // Legacy auth modal code removed - using Firebase AuthModal instead
 
-  // Bypass authentication checks if user session exists
-  if (userInStorage) {
-    // Skip authentication and onboarding - go to main app
-  } else if (needsOnboarding) {
+  // Onboarding gate — deterministic, independent of the tangled demo/global/auth
+  // user state. Show the survey to a genuinely signed-in user (isAuthenticated is
+  // false for the anonymous demo-browse user) who hasn't finished onboarding on
+  // this device. Completion is recorded per-user in localStorage.
+  const onboardingDoneForUser = (() => {
+    try {
+      return !!user?.uid && localStorage.getItem('swipecity_onboarding_complete_' + user.uid) === 'true';
+    } catch {
+      return false;
+    }
+  })();
+  const shouldShowOnboarding = isAuthenticated && !!user?.uid && !onboardingDoneForUser;
+
+  // Bypass straight to the main app for the demo-browse user and for signed-in
+  // users who have already onboarded; otherwise run the onboarding survey.
+  if (userInStorage && !shouldShowOnboarding) {
+    // Demo browser or returning, onboarded user — go to main app
+  } else if (shouldShowOnboarding) {
     console.log('Showing onboarding, step:', appState.onboardingStep);
     
     /* BACKUP: Original complex onboarding flow removed for streamlined version
@@ -2569,12 +2613,8 @@ if (!appState.showAddItem) {
       );
     }
     
-    // Step 3: Distance Range
+    // Step 3: City selection
     if (appState.onboardingStep === 3) {
-      const driveTime = appState.searchRadius <= 5 ? '10-15 min' : 
-                       appState.searchRadius <= 15 ? '15-30 min' : 
-                       appState.searchRadius <= 30 ? '30-45 min' : '45+ min';
-      
       return (
         <div style={{
           minHeight: '100vh',
@@ -2590,133 +2630,51 @@ if (!appState.showAddItem) {
           <div style={{ marginBottom: '15px' }}>
             <div style={{ fontSize: '36px', marginBottom: '10px' }}>📍</div>
             <h1 style={{fontSize: '24px', marginBottom: '8px', margin: '0 0 8px 0', fontWeight: '700'}}>
-              How far will you travel?
+              Which cities do you want to shop?
             </h1>
             <p style={{margin: '0', fontSize: '14px', opacity: 0.9}}>
-              We'll show you items within your travel range
+              Pick the cities you'll browse. You can change this anytime — leave them all off to see every city.
             </p>
           </div>
           
-          <div style={{ 
-            background: 'rgba(255,255,255,0.15)', 
-            borderRadius: '20px', 
-            padding: '15px', 
-            maxWidth: '380px', 
-            margin: '0 auto 15px' 
+          <div style={{
+            background: 'rgba(255,255,255,0.15)',
+            borderRadius: '20px',
+            padding: '15px',
+            maxWidth: '400px',
+            margin: '0 auto 15px'
           }}>
-            <div style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '8px' }}>
-              Distance Range
+            <div style={{ fontSize: '13px', opacity: 0.85, marginBottom: '12px' }}>
+              {(!appState.selectedCities || appState.selectedCities.length === 0)
+                ? 'No cities selected — you\'ll see listings from everywhere.'
+                : `${appState.selectedCities.length} ${appState.selectedCities.length === 1 ? 'city' : 'cities'} selected.`}
             </div>
-            
-            {/* Increment controls for distance */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
-              <button
-                onClick={() => {
-                  const newValue = Math.max(1, appState.searchRadius - 10);
-                  updateState({ searchRadius: newValue });
-                }}
-                style={{
-                  background: 'rgba(255,255,255,0.2)',
-                  color: 'white',
-                  border: '1px solid rgba(255,255,255,0.5)',
-                  borderRadius: '50%',
-                  width: '30px',
-                  height: '30px',
-                  cursor: 'pointer',
-                  fontSize: '18px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center'
-                }}
-              >
-                -
-              </button>
-              <div
-                onClick={() => {
-                  const input = prompt('Enter distance in miles:', appState.searchRadius);
-                  if (input !== null) {
-                    const value = parseInt(input) || 15;
-                    const validValue = Math.min(Math.max(1, value), 100);
-                    updateState({ searchRadius: validValue });
-                  }
-                }}
-                style={{
-                  cursor: 'pointer',
-                  fontSize: '16px',
-                  fontWeight: 'bold',
-                  padding: '8px 15px',
-                  background: 'rgba(255,255,255,0.1)',
-                  borderRadius: '8px',
-                  textAlign: 'center'
-                }}
-              >
-                {appState.searchRadius} miles
-              </div>
-              <button
-                onClick={() => {
-                  const newValue = Math.min(100, appState.searchRadius + 10);
-                  updateState({ searchRadius: newValue });
-                }}
-                style={{
-                  background: 'rgba(255,255,255,0.2)',
-                  color: 'white',
-                  border: '1px solid rgba(255,255,255,0.5)',
-                  borderRadius: '50%',
-                  width: '30px',
-                  height: '30px',
-                  cursor: 'pointer',
-                  fontSize: '18px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center'
-                }}
-              >
-                +
-              </button>
-            </div>
-            
-            <div style={{ fontSize: '12px', opacity: 0.7, marginBottom: '15px' }}>
-              ~{driveTime} drive time
-            </div>
-            
-            <input
-              type="range"
-              min="1"
-              max="50"
-              value={appState.searchRadius}
-              onChange={(e) => updateState({ searchRadius: parseInt(e.target.value) })}
-              style={{
-                width: '100%',
-                height: '20px',
-                borderRadius: '10px',
-                background: 'rgba(255,255,255,0.3)',
-                outline: 'none',
-                marginBottom: '15px',
-                cursor: 'pointer',
-                WebkitAppearance: 'none',
-                MozAppearance: 'none',
-                appearance: 'none'
-              }}
-            />
-            
-            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
-              {[5, 15, 25, 40].map((distance) => (
-                <button
-                  key={distance}
-                  onClick={() => updateState({ searchRadius: distance })}
-                  style={{
-                    background: appState.searchRadius === distance ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.3)',
-                    color: appState.searchRadius === distance ? '#333' : 'white',
-                    border: '1px solid rgba(255,255,255,0.5)',
-                    borderRadius: '15px',
-                    padding: '8px 12px',
-                    fontSize: '12px',
-                    cursor: 'pointer'
-                  }}
-                >
-                  {distance}mi
-                </button>
-              ))}
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
+              {SUPPORTED_CITIES.map((city) => {
+                const selected = (appState.selectedCities || []).includes(city);
+                return (
+                  <button
+                    key={city}
+                    onClick={() => {
+                      const set = appState.selectedCities || [];
+                      const next = selected ? set.filter(c => c !== city) : [...set, city];
+                      updateState({ selectedCities: next });
+                    }}
+                    style={{
+                      background: selected ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.2)',
+                      color: selected ? '#333' : 'white',
+                      border: '1px solid rgba(255,255,255,0.5)',
+                      borderRadius: '15px',
+                      padding: '8px 12px',
+                      fontSize: '12px',
+                      fontWeight: '500',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {city}
+                  </button>
+                );
+              })}
             </div>
           </div>
           
@@ -2800,12 +2758,20 @@ if (!appState.showAddItem) {
                 searchKeywords: appState.searchKeywords,
                 minPrice: appState.minPrice,
                 maxPrice: appState.maxPrice,
-                searchRadius: appState.searchRadius,
+                cities: appState.selectedCities,
                 conditionPreference: appState.conditionPreference
               };
               
               const result = await savePreferences(preferences);
-              
+
+              // Record completion per-user so onboarding doesn't re-run for them.
+              // This is the source of truth the onboarding gate checks.
+              try {
+                if (user?.uid) {
+                  localStorage.setItem('swipecity_onboarding_complete_' + user.uid, 'true');
+                }
+              } catch (e) { /* ignore storage errors */ }
+
               if (result.success) {
                 console.log('✅ Onboarding completed successfully!');
               } else {
@@ -3028,7 +2994,7 @@ if (!appState.showAddItem) {
                               return sellerBios[currentItem.seller_name] || `${currentItem.seller_name} is a trusted seller on SwipeCity with ${currentItem.seller_reviews} reviews and a ${currentItem.seller_rating} star rating.`;
                             })();
                             
-                            alert(`📝 Seller Profile\n\n👤 ${currentItem.seller_name}\n⭐ ${currentItem.seller_rating} rating (${currentItem.seller_reviews} reviews)\n📍 ${currentItem.city || currentItem.distance || 'Location not specified'}\n${currentItem.verified ? '✅ Verified Seller' : '⚠️ Unverified'}\n\n${sellerBio}`);
+                            alert(`📝 Seller Profile\n\n👤 ${currentItem.seller_name}\n⭐ ${currentItem.seller_rating} rating (${currentItem.seller_reviews} reviews)\n📍 ${currentItem.city || currentItem.location || 'Location not specified'}\n${currentItem.verified ? '✅ Verified Seller' : '⚠️ Unverified'}\n\n${sellerBio}`);
                           }}
                           style={{ 
                             fontWeight: '600', 
@@ -3158,7 +3124,7 @@ if (!appState.showAddItem) {
                   <p style={{ color: '#666', margin: '10px 0', fontSize: '14px', lineHeight: '1.4' }}>{currentItem.description}</p>
                   
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '15px' }}>
-                    <span style={{ color: '#888', fontSize: '14px' }}>📍 {currentItem.city || currentItem.distance || 'Location not specified'}</span>
+                    <span style={{ color: '#888', fontSize: '14px' }}>📍 {currentItem.city || currentItem.location || 'Location not specified'}</span>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
                       <span style={{ color: '#888', fontSize: '14px' }}>❤️ {currentItem.likes_count} likes</span>
                       <div style={{
@@ -3185,22 +3151,47 @@ if (!appState.showAddItem) {
               padding: '40px',
               backdropFilter: 'blur(10px)'
             }}>
-              <h2 style={{ marginBottom: '15px' }}>🎉 You've seen all items!</h2>
-              <p style={{ marginBottom: '20px' }}>Check back later for new listings</p>
-              <button
-                onClick={() => updateState({ currentItemIndex: 0 })}
-                style={{
-                  background: '#4CAF50',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '25px',
-                  padding: '15px 30px',
-                  fontWeight: 'bold',
-                  cursor: 'pointer'
-                }}
-              >
-                Start Over
-              </button>
+              {(appState.selectedCities && appState.selectedCities.length > 0) ? (
+                <>
+                  <h2 style={{ marginBottom: '15px' }}>📍 No listings in your cities yet</h2>
+                  <p style={{ marginBottom: '20px' }}>
+                    Nothing is listed in {appState.selectedCities.length === 1 ? appState.selectedCities[0] : 'your selected cities'} right now. Try browsing every city.
+                  </p>
+                  <button
+                    onClick={() => updateState({ selectedCities: [], currentItemIndex: 0 })}
+                    style={{
+                      background: '#4CAF50',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '25px',
+                      padding: '15px 30px',
+                      fontWeight: 'bold',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Show all cities
+                  </button>
+                </>
+              ) : (
+                <>
+                  <h2 style={{ marginBottom: '15px' }}>🎉 You've seen all items!</h2>
+                  <p style={{ marginBottom: '20px' }}>Check back later for new listings</p>
+                  <button
+                    onClick={() => updateState({ currentItemIndex: 0 })}
+                    style={{
+                      background: '#4CAF50',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '25px',
+                      padding: '15px 30px',
+                      fontWeight: 'bold',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Start Over
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -4025,67 +4016,60 @@ if (!appState.showAddItem) {
                 </div>
               </div>
 
-              {/* Distance Range Section */}
+              {/* Cities Section */}
               <div style={{ marginBottom: '30px' }}>
-                <h3 style={{ marginBottom: '15px', fontSize: '16px', color: '#333', fontWeight: '600' }}>
-                  📍 Travel Distance
+                <h3 style={{ marginBottom: '5px', fontSize: '16px', color: '#333', fontWeight: '600' }}>
+                  📍 Cities I Shop In
                 </h3>
-                <div style={{ 
-                  background: '#f8f9ff', 
-                  borderRadius: '15px', 
-                  padding: '20px', 
-                  border: '2px solid #e1e8ff'
-                }}>
-                  <div style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '8px', textAlign: 'center', color: '#333' }}>
-                    {appState.searchRadius} miles
-                  </div>
-                  <div style={{ fontSize: '12px', color: '#666', marginBottom: '15px', textAlign: 'center' }}>
-                    ~{appState.searchRadius <= 5 ? '10-15 min' : 
-                      appState.searchRadius <= 15 ? '15-30 min' : 
-                      appState.searchRadius <= 30 ? '30-45 min' : '45+ min'} drive time
-                  </div>
-                  
-                  <input
-                    type="range"
-                    min="1"
-                    max="50"
-                    value={appState.searchRadius}
-                    onChange={(e) => updateState({ searchRadius: parseInt(e.target.value) })}
-                    style={{
-                      width: '100%',
-                      height: '25px',
-                      borderRadius: '12px',
-                      background: '#e1e8ff',
-                      outline: 'none',
-                      marginBottom: '15px',
-                      cursor: 'pointer',
-                      WebkitAppearance: 'none',
-                      MozAppearance: 'none',
-                      appearance: 'none'
-                    }}
-                  />
-                  
-                  <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
-                    {[5, 15, 25, 40].map((distance) => (
+                <p style={{ margin: '0 0 15px 0', fontSize: '12px', color: '#666' }}>
+                  {(!appState.selectedCities || appState.selectedCities.length === 0)
+                    ? 'Showing all cities. Tap cities to shop only those.'
+                    : `Showing ${appState.selectedCities.length} ${appState.selectedCities.length === 1 ? 'city' : 'cities'}.`}
+                </p>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  {SUPPORTED_CITIES.map((city) => {
+                    const selected = (appState.selectedCities || []).includes(city);
+                    return (
                       <button
-                        key={distance}
-                        onClick={() => updateState({ searchRadius: distance })}
+                        key={city}
+                        onClick={() => {
+                          const set = appState.selectedCities || [];
+                          const next = selected ? set.filter(c => c !== city) : [...set, city];
+                          updateState({ selectedCities: next });
+                        }}
                         style={{
-                          background: appState.searchRadius === distance ? '#667eea' : '#e1e8ff',
-                          color: appState.searchRadius === distance ? 'white' : '#333',
-                          border: 'none',
-                          borderRadius: '12px',
-                          padding: '6px 10px',
-                          fontSize: '11px',
+                          background: selected ? '#667eea' : '#f5f5f5',
+                          color: selected ? 'white' : '#333',
+                          border: '2px solid ' + (selected ? '#667eea' : '#ddd'),
+                          borderRadius: '15px',
+                          padding: '8px 12px',
+                          fontSize: '12px',
                           cursor: 'pointer',
                           fontWeight: '500'
                         }}
                       >
-                        {distance}mi
+                        {city}
                       </button>
-                    ))}
-                  </div>
+                    );
+                  })}
                 </div>
+                {appState.selectedCities && appState.selectedCities.length > 0 && (
+                  <button
+                    onClick={() => updateState({ selectedCities: [] })}
+                    style={{
+                      marginTop: '12px',
+                      background: 'transparent',
+                      color: '#667eea',
+                      border: 'none',
+                      fontSize: '13px',
+                      cursor: 'pointer',
+                      fontWeight: '600',
+                      padding: 0
+                    }}
+                  >
+                    Clear — show all cities
+                  </button>
+                )}
               </div>
 
               {/* Condition Preference Section */}
@@ -4158,7 +4142,7 @@ if (!appState.showAddItem) {
                         categories: appState.selectedShoppingCategories,
                         minPrice: appState.minPrice,
                         maxPrice: appState.maxPrice,
-                        searchRadius: appState.searchRadius,
+                        cities: appState.selectedCities,
                         conditionPreference: appState.conditionPreference
                       }
                     };
@@ -5183,20 +5167,24 @@ if (!appState.showAddItem) {
             <label style={{ display: 'block', marginBottom: '8px', color: '#333', fontWeight: 'bold' }}>
               City *
             </label>
-            <input
-              type="text"
-              placeholder="e.g., San Francisco"
+            <select
               value={appState.newItemCity || ''}
-              onChange={(e) => updateState({ newItemCity: SecurityUtils.sanitizeInput(e.target.value) })}
+              onChange={(e) => updateState({ newItemCity: e.target.value })}
               style={{
                 width: '100%',
                 padding: '12px',
                 borderRadius: '8px',
                 border: '1px solid #ddd',
                 fontSize: '16px',
-                boxSizing: 'border-box'
+                boxSizing: 'border-box',
+                background: 'white'
               }}
-            />
+            >
+              <option value="">Select a city…</option>
+              {SUPPORTED_CITIES.map((city) => (
+                <option key={city} value={city}>{city}</option>
+              ))}
+            </select>
           </div>
 
           <div style={{ marginBottom: '25px' }}>
@@ -7109,24 +7097,41 @@ if (!appState.showAddItem) {
                   
                   <button
                     onClick={async () => {
-                      if (window.confirm('Are you sure you want to delete your account? This action cannot be undone and will permanently delete all your data including messages, saved items, and listings.')) {
-                        try {
-                          console.log('🗑️ Deleting account...');
-                          // Delete user account
-                          if (deleteAccount) {
-                            const deleteResult = await deleteAccount();
-                            if (deleteResult.success) {
-                              console.log('✅ Account deleted successfully');
-                              alert('Your account has been deleted successfully.');
-                              window.location.reload();
-                            } else {
-                              alert('Failed to delete account: ' + (deleteResult.error || 'Please try signing out and back in, then try again.'));
-                            }
+                      if (!window.confirm('Are you sure you want to delete your account? This action cannot be undone and will permanently delete all your data including messages, saved items, and listings.')) {
+                        return;
+                      }
+                      if (!deleteAccount) return;
+                      try {
+                        console.log('🗑️ Deleting account...');
+                        let deleteResult = await deleteAccount();
+
+                        // Firebase blocks deletion when the login is too old. Re-confirm
+                        // the password to get a fresh login, then retry once.
+                        const needsRecentLogin = !deleteResult.success &&
+                          /CREDENTIAL_TOO_OLD|LOGIN_AGAIN|recent login/i.test(deleteResult.error || '');
+                        if (needsRecentLogin && reauthenticate) {
+                          const password = window.prompt('For your security, please re-enter your password to delete your account:');
+                          if (!password) {
+                            return; // user cancelled
                           }
-                        } catch (error) {
-                          console.error('❌ Account deletion failed:', error);
-                          alert('Failed to delete account. Please try again or contact support.');
+                          const reauth = await reauthenticate(password);
+                          if (!reauth.success) {
+                            alert('Could not verify your password: ' + (reauth.error || 'please try again.'));
+                            return;
+                          }
+                          deleteResult = await deleteAccount();
                         }
+
+                        if (deleteResult.success) {
+                          console.log('✅ Account deleted successfully');
+                          alert('Your account has been deleted successfully.');
+                          window.location.reload();
+                        } else {
+                          alert('Failed to delete account: ' + (deleteResult.error || 'Please try signing out and back in, then try again.'));
+                        }
+                      } catch (error) {
+                        console.error('❌ Account deletion failed:', error);
+                        alert('Failed to delete account. Please try again or contact support.');
                       }
                     }}
                     style={{

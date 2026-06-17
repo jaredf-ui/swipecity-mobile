@@ -280,6 +280,41 @@ export class FirebaseNativeService {
   }
 
   /**
+   * Re-authenticate the current user with their password to get a token with a
+   * fresh login time. Firebase requires this before sensitive actions like
+   * account deletion (CREDENTIAL_TOO_OLD_LOGIN_AGAIN) once the session ages.
+   */
+  async reauthenticate(password) {
+    try {
+      const email = this.currentUser?.email;
+      if (!email) {
+        return { success: false, error: 'No current user to re-authenticate' };
+      }
+
+      const response = await nativeHttp.post(`${this.authUrl}:signInWithPassword?key=${this.apiKey}`, {
+        email,
+        password,
+        returnSecureToken: true
+      });
+
+      if (!response.ok) {
+        const errorMessage = response.data?.error?.message || 'Re-authentication failed';
+        return { success: false, error: errorMessage };
+      }
+
+      // Adopt the fresh tokens (new login time) so the next sensitive call passes.
+      this.idToken = response.data.idToken;
+      this.refreshToken = response.data.refreshToken;
+      this.saveAuthToStorage();
+
+      return { success: true };
+    } catch (error) {
+      console.error('[Firebase Auth] Re-authentication error:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
    * Refresh ID token using refresh token
    */
   async refreshIdToken() {

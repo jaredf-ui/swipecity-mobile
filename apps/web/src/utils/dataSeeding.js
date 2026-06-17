@@ -168,35 +168,35 @@ const userProfiles = [
     bio: 'Long-time collector of vintage items and tech gadgets. Always looking for unique finds!',
     verified: true,
     joinedMonths: 8,
-    location: 'San Francisco, CA'
+    location: 'Raleigh, NC'
   },
   {
     username: 'SarahStylesLiving',
     bio: 'Interior designer selling carefully curated home pieces. All items from smoke-free, pet-free home.',
     verified: true,
     joinedMonths: 12,
-    location: 'Los Angeles, CA'
+    location: 'Durham, NC'
   },
   {
     username: 'TechEnthusiast92',
     bio: 'Software engineer who loves trying new tech. Always upgrading, so selling previous generation items.',
     verified: true,
     joinedMonths: 6,
-    location: 'Austin, TX'
+    location: 'Raleigh, NC'
   },
   {
     username: 'OutdoorAdventurer',
     bio: 'Hiking and camping gear enthusiast. Selling quality outdoor equipment that\'s been well cared for.',
     verified: true,
     joinedMonths: 15,
-    location: 'Denver, CO'
+    location: 'Cary, NC'
   },
   {
     username: 'MinimalistMom',
     bio: 'Decluttering family home. Selling kids items, household goods, and more. Everything clean and well-maintained.',
     verified: true,
     joinedMonths: 4,
-    location: 'Portland, OR'
+    location: 'Chapel Hill, NC'
   },
   {
     username: 'VintageVinylVibe',
