@@ -7420,37 +7420,11 @@ if (!appState.showAddItem) {
                   </div>
                 </div>
 
-                {/* Seller-mode Sign Out + Delete Account. App Store 5.1.1(v)
-                    requires in-app account deletion to be reachable; the buyer
-                    branch has its own copy, so a reviewer landing in seller mode
-                    must be able to delete here too. */}
+                {/* Seller-mode Delete Account. App Store 5.1.1(v) requires in-app
+                    account deletion to be reachable; the buyer branch has its own
+                    copy. Sign Out is already provided by the Seller Action Buttons
+                    row above, so only Delete Account is added here. */}
                 <div style={{ marginTop: '15px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  <button
-                    onClick={async () => {
-                      try {
-                        const result = await signOut();
-                        if (!result.success) {
-                          alert('Sign out failed: ' + (result.error || 'Unknown error'));
-                        }
-                      } catch (error) {
-                        alert('Sign out failed. Please try again.');
-                      }
-                    }}
-                    style={{
-                      width: '100%',
-                      background: '#ef4444',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '8px',
-                      padding: '10px',
-                      fontWeight: 'bold',
-                      cursor: 'pointer',
-                      fontSize: '13px'
-                    }}
-                  >
-                    👋 Sign Out
-                  </button>
-
                   <button
                     onClick={async () => {
                       if (!window.confirm('Are you sure you want to delete your account? This action cannot be undone and will permanently delete all your data including messages, saved items, and listings.')) {
