@@ -49,6 +49,8 @@
 	<string>SwipeCity needs camera access to take photos of items you want to sell</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>SwipeCity needs photo library access to select photos of items you want to sell</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>SwipeCity needs photo library access so you can add photos of items you want to sell</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSExceptionDomains</key>
