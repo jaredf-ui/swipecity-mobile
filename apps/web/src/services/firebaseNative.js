@@ -232,7 +232,19 @@ export class FirebaseNativeService {
    */
   async deleteAccount() {
     try {
-      // accounts:delete rejects stale tokens — make sure ours is fresh first.
+      // accounts:delete rejects stale tokens. Firebase ID tokens expire after
+      // ~1h, and ensureValidToken() only refreshes a *missing* token — not an
+      // expired one — so a token restored from storage or minted at an earlier
+      // sign-in is often stale by the time the user taps Delete, producing
+      // INVALID_ID_TOKEN. Proactively refresh from the refresh token first.
+      if (this.refreshToken) {
+        try {
+          await this.refreshIdToken();
+        } catch (refreshError) {
+          console.error('[Firebase Auth] Pre-delete token refresh failed:', refreshError);
+          // Fall through; ensureValidToken/the retry below will surface the issue.
+        }
+      }
       await this.ensureValidToken();
 
       if (!this.idToken) {
@@ -254,10 +266,20 @@ export class FirebaseNativeService {
         }
       }
 
-      // Delete the Auth account itself.
-      const response = await nativeHttp.post(`${this.authUrl}:delete?key=${this.apiKey}`, {
+      // Delete the Auth account itself. If the token is still stale, refresh
+      // once more and retry (covers a token that expired between refresh and
+      // this call, or a restore path that left ensureValidToken a no-op).
+      let response = await nativeHttp.post(`${this.authUrl}:delete?key=${this.apiKey}`, {
         idToken: this.idToken
       });
+
+      if (!response.ok && response.data?.error?.message?.includes('INVALID_ID_TOKEN') && this.refreshToken) {
+        console.log('[Firebase Auth] Delete got INVALID_ID_TOKEN — refreshing and retrying...');
+        await this.refreshIdToken();
+        response = await nativeHttp.post(`${this.authUrl}:delete?key=${this.apiKey}`, {
+          idToken: this.idToken
+        });
+      }
 
       if (!response.ok) {
         const errorMessage = response.data?.error?.message || `Account deletion failed (Status: ${response.status})`;

@@ -289,7 +289,16 @@ export const AuthProvider = ({ children }) => {
       const authDeleteResult = await firebaseNative.deleteAccount();
       if (!authDeleteResult.success) {
         console.error('❌ Failed to delete account:', authDeleteResult.error);
-        return { success: false, error: authDeleteResult.error || 'Failed to delete account' };
+        // A stale/invalid token that survived the refresh+retry means the
+        // session can't be re-validated silently — ask the user to re-auth.
+        const raw = authDeleteResult.error || '';
+        if (raw.includes('INVALID_ID_TOKEN') || raw.includes('TOKEN_EXPIRED') || raw.includes('USER_NOT_FOUND')) {
+          return { success: false, error: 'Your session expired. Please sign out, sign back in, and try deleting your account again.' };
+        }
+        if (raw.includes('CREDENTIAL_TOO_OLD') || raw.includes('requires-recent-login')) {
+          return { success: false, error: 'For your security, please sign out and sign back in before deleting your account.' };
+        }
+        return { success: false, error: raw || 'Failed to delete account' };
       }
       console.log('✅ Firebase auth account deleted');
 
