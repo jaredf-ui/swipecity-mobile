@@ -1998,8 +1998,8 @@ const handleDragEnd = useCallback(() => {
 // Enhanced redirect handling for mobile
 useEffect(() => {
   const handleRedirectResult = async () => {
-    if (!window.firebase) {
-      console.log('Firebase not available for redirect result');
+    if (!window.firebase || typeof window.firebase.auth !== 'function') {
+      console.log('Firebase auth not available for redirect result');
       return;
     }
     
@@ -2116,8 +2116,15 @@ useEffect(() => {
 
 // Additional mobile redirect handling
 useEffect(() => {
-  // Check for auth state changes (more reliable on mobile)
-  if (window.firebase) {
+  // Check for auth state changes (more reliable on mobile).
+  // Guard on window.firebase.auth being a FUNCTION, not just window.firebase:
+  // the compat SDK loads in two scripts (app-compat then auth-compat), and on
+  // relaunch there's a window where window.firebase exists but .auth doesn't yet.
+  // Calling window.firebase.auth() then threw "is not a function" -> ErrorBoundary
+  // crash on launch. Native iOS uses firebaseNative (REST) anyway, so skipping
+  // this when the compat auth SDK isn't ready is harmless.
+  if (window.firebase && typeof window.firebase.auth === 'function') {
+    try {
     const unsubscribe = window.firebase.auth().onAuthStateChanged((user) => {
       if (user && !globalUser) {
         console.log('✅ Auth state change detected:', user);
@@ -2139,6 +2146,9 @@ useEffect(() => {
     });
     
     return () => unsubscribe();
+    } catch (e) {
+      console.warn('Firebase auth listener setup skipped:', e?.message);
+    }
   }
 }, [updateState]);
 
