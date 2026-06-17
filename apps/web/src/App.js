@@ -6751,9 +6751,14 @@ if (!appState.showAddItem) {
           boxShadow: '-5px 0 15px rgba(0,0,0,0.1)',
           zIndex: 1000,
           transform: 'translateX(0)',
-          transition: 'transform 0.3s ease'
+          transition: 'transform 0.3s ease',
+          // Make the panel scrollable: in seller mode the dashboard pushed the
+          // Sign Out / Delete Account buttons off the bottom with no way to reach
+          // them. Account deletion must be reachable (App Store 5.1.1(v)).
+          overflowY: 'auto',
+          WebkitOverflowScrolling: 'touch'
         }}>
-          <div style={{ padding: '20px' }}>
+          <div style={{ padding: '20px', paddingBottom: 'max(20px, env(safe-area-inset-bottom) + 20px)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
               <h3 style={{ margin: 0 }}>Profile</h3>
               <CloseButton 
