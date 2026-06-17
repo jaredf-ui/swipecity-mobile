@@ -48,12 +48,24 @@ export const AuthProvider = ({ children }) => {
                   uid: userData.uid, // Ensure uid is preserved
                   email: userData.email, // Ensure email is preserved
                 };
-                
-                
+
+
                 // Update with complete data
                 localStorage.setItem('swipecity_native_user', JSON.stringify(completeUserData));
                 setUser(completeUserData);
                 setUserProfile(completeUserData);
+
+                // Re-establish the per-device onboarding flag from the profile.
+                // The onboarding gate keys off this flag; if the WebView reloads
+                // (e.g. iOS evicting it after the native camera closes) an
+                // already-onboarded user must not be dumped back into the survey.
+                const alreadyOnboarded =
+                  freshProfile.onboardingComplete === true ||
+                  (freshProfile.preferences?.cities?.length > 0) ||
+                  (freshProfile.preferences?.categories?.length > 0);
+                if (alreadyOnboarded) {
+                  localStorage.setItem('swipecity_onboarding_complete_' + userData.uid, 'true');
+                }
               }
             } catch (refreshError) {
               // Continue with cached data if refresh fails

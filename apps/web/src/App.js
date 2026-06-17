@@ -1,5 +1,6 @@
 import React, { useState, useEffect, createContext, useContext, useCallback, useMemo, Component } from 'react';
 import { MessageCircle, User, LogOut, Camera } from 'lucide-react';
+import { Camera as CapacitorCamera, CameraResultType, CameraSource } from '@capacitor/camera';
 import AdminDashboard from './components/AdminDashboard';
 import SkeletonCard from './components/SkeletonCard';
 import { SwipeFeedback, LoadingSpinner, MatchSuccessAnimation } from './components/SwipeFeedback';
@@ -1281,6 +1282,70 @@ const addListingPhotos = useCallback(async (fileList, source = 'camera') => {
     }
   }, [appState.selectedImages, updateState]);
 
+  // Take a photo with the native camera via the Capacitor Camera plugin.
+  // We do NOT use an <input type="file" capture> here: on iOS the live camera
+  // puts the WKWebView under memory pressure and the view is reloaded when the
+  // camera closes, wiping the in-progress listing (and previously trapping the
+  // user in onboarding). The plugin opens the camera natively without evicting
+  // the web view, so the photo returns cleanly into the form.
+  // `target` is 'add' (new listing) or 'edit' (edit-listing modal).
+  const captureListingPhotoWithCamera = useCallback(async (target = 'add') => {
+    const stateKey = target === 'edit' ? 'editImages' : 'selectedImages';
+    const currentImages = appState[stateKey] || [];
+    if (currentImages.length >= 4) {
+      alert('Maximum 4 photos allowed');
+      return;
+    }
+
+    let dataUrl;
+    try {
+      const photo = await CapacitorCamera.getPhoto({
+        quality: 70,
+        allowEditing: false,
+        resultType: CameraResultType.DataUrl,
+        source: CameraSource.Camera,
+        saveToGallery: false
+      });
+      dataUrl = photo?.dataUrl;
+    } catch (err) {
+      // getPhoto rejects when the user cancels or denies permission — both are
+      // benign here; just abort without attaching a photo.
+      const msg = err?.message || '';
+      if (msg && !/cancel/i.test(msg)) {
+        console.error('Camera capture failed:', err);
+      }
+      return;
+    }
+    if (!dataUrl) return;
+
+    // Same anti-bot verification as the library path.
+    const questions = [
+      "What's the main color of your item?",
+      "How many items are shown in this photo?",
+      "Is this item indoors or outdoors?",
+      "Is there text visible on your item?",
+      "What category best describes this item?"
+    ];
+    const randomQuestion = questions[Math.floor(Math.random() * questions.length)];
+    const answer = prompt(`🤖 Quick verification: ${randomQuestion}\n\n(This helps prevent bots from posting fake items)`);
+    if (!answer || answer.trim().length < 2) {
+      alert('Please provide an answer to continue posting.');
+      return;
+    }
+
+    const newImage = {
+      file: null,
+      url: dataUrl,
+      name: `camera_${Date.now()}.jpg`,
+      timestamp: Date.now(),
+      verified: true,
+      source: 'camera',
+      verificationQuestion: randomQuestion,
+      verificationAnswer: answer.trim()
+    };
+    updateState({ [stateKey]: [...currentImages, newImage] });
+  }, [appState.selectedImages, appState.editImages, updateState]);
+
 const handleSaveForLater = useCallback(() => {
     console.log('💾 Save for Later clicked');
     console.log('💾 currentItem:', currentItem?.title);
@@ -2173,6 +2238,15 @@ if (!appState.showAddItem) {
   const userInStorage = hasStoredUser();
 
   // Legacy auth modal code removed - using Firebase AuthModal instead
+
+  // Wait for auth to finish initializing BEFORE deciding onboarding. On a
+  // WebView reload (e.g. iOS evicting the view after the native camera closes)
+  // auth re-initializes asynchronously; evaluating the onboarding gate during
+  // that window — before the profile/onboarding flag is restored — would flash
+  // an already-onboarded user into the survey and trap them.
+  if (authLoading) {
+    return <LoadingScreen />;
+  }
 
   // Onboarding gate — deterministic, independent of the tangled demo/global/auth
   // user state. Show the survey to a genuinely signed-in user (isAuthenticated is
@@ -5036,7 +5110,7 @@ if (!appState.showAddItem) {
               
               {(!appState.selectedImages || appState.selectedImages.length < 4) && (
                 <>
-                <label htmlFor="camera-capture" style={{
+                <div onClick={() => captureListingPhotoWithCamera('add')} style={{
                   aspectRatio: '1/1',
                   border: '2px dashed #4CAF50',
                   borderRadius: '12px',
@@ -5055,15 +5129,7 @@ if (!appState.showAddItem) {
                   <Camera size={24} style={{ color: '#4CAF50', marginBottom: '5px' }} />
                   <span style={{ fontSize: '12px', color: '#4CAF50', textAlign: 'center', fontWeight: '600' }}>Take Photo</span>
                   <span style={{ fontSize: '9px', color: '#666', textAlign: 'center', marginTop: '2px' }}>Camera 📷</span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    style={{ display: 'none' }}
-                    id="camera-capture"
-                    onChange={(e) => { addListingPhotos(e.target.files, 'camera'); e.target.value = ''; }}
-                  />
-                </label>
+                </div>
 
                 <label htmlFor="library-upload" style={{
                   aspectRatio: '1/1',
@@ -5536,7 +5602,7 @@ if (!appState.showAddItem) {
                         />
                       </label>
                       
-                      <label htmlFor="edit-camera-capture" style={{
+                      <div onClick={() => captureListingPhotoWithCamera('edit')} style={{
                         aspectRatio: '1/1',
                         border: '2px dashed #4CAF50',
                         borderRadius: '10px',
@@ -5552,38 +5618,7 @@ if (!appState.showAddItem) {
                       }}>
                         <Camera size={20} style={{ color: '#4CAF50', marginBottom: '3px' }} />
                         <span style={{ fontSize: '10px', color: '#4CAF50', textAlign: 'center' }}>Camera</span>
-                        <input
-                          type="file"
-                          accept="image/*"
-                          capture="environment"
-                          style={{ display: 'none' }}
-                          id="edit-camera-capture"
-                          onChange={(e) => {
-                            const files = Array.from(e.target.files);
-                            const currentImages = appState.editImages || [];
-                            
-                            if (currentImages.length + files.length > 4) {
-                              alert('Maximum 4 photos allowed');
-                              return;
-                            }
-                            
-                            files.forEach(file => {
-                              const reader = new FileReader();
-                              reader.onload = (event) => {
-                                const newImage = {
-                                  file: file,
-                                  url: event.target.result,
-                                  name: file.name
-                                };
-                                updateState({ 
-                                  editImages: [...(appState.editImages || []), newImage] 
-                                });
-                              };
-                              reader.readAsDataURL(file);
-                            });
-                          }}
-                        />
-                      </label>
+                      </div>
                     </div>
                   )}
                 </div>
