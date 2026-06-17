@@ -594,15 +594,27 @@ export class FirebaseNativeService {
    * Upload file to Firebase Storage
    */
   async uploadFile(path, file) {
-    if (!this.idToken) {
+    // Make sure the token is fresh — like accounts:delete, a Storage upload
+    // with an expired ID token is rejected (a token restored from storage or
+    // minted at an earlier sign-in is often stale by upload time).
+    if (this.refreshToken) {
+      try {
+        await this.refreshIdToken();
+      } catch (refreshError) {
+        console.error('[Storage] Pre-upload token refresh failed:', refreshError);
+      }
+    }
+    try {
+      await this.ensureValidToken();
+    } catch (tokenError) {
       throw new Error('User not authenticated');
     }
 
     try {
       // Convert file to base64 for upload
       const base64Data = await this.fileToBase64(file);
-      
-      const response = await nativeHttp.post(
+
+      const doUpload = () => nativeHttp.post(
         `${this.storageUrl}/${encodeURIComponent(path)}?key=${this.apiKey}`,
         base64Data,
         {
@@ -613,13 +625,22 @@ export class FirebaseNativeService {
         }
       );
 
+      let response = await doUpload();
+
+      // Refresh + retry once if the token was rejected mid-flight.
+      if (!response.ok && (response.status === 401 || response.data?.error?.message?.includes('INVALID_ID_TOKEN')) && this.refreshToken) {
+        console.log('[Storage] Upload auth error — refreshing token and retrying...');
+        await this.refreshIdToken();
+        response = await doUpload();
+      }
+
       if (response.ok) {
         // Get download URL
         const downloadUrl = await this.getDownloadURL(path);
         return { success: true, url: downloadUrl };
       }
 
-      return { success: false, error: 'Upload failed' };
+      return { success: false, error: response.data?.error?.message || 'Upload failed' };
     } catch (error) {
       console.error('[Storage] Upload error:', error);
       return { success: false, error: error.message };
