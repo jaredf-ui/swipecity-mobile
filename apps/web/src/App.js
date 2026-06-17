@@ -1301,6 +1301,9 @@ const addListingPhotos = useCallback(async (fileList, source = 'camera') => {
     try {
       const photo = await CapacitorCamera.getPhoto({
         quality: 70,
+        // Downscale listing photos too — kept larger than avatars since they
+        // fill a card, but bounded so the data URL doesn't bloat memory.
+        width: 1200,
         allowEditing: false,
         resultType: CameraResultType.DataUrl,
         source: CameraSource.Camera,
@@ -1357,7 +1360,12 @@ const addListingPhotos = useCallback(async (fileList, source = 'camera') => {
     let dataUrl;
     try {
       const photo = await CapacitorCamera.getPhoto({
-        quality: 70,
+        quality: 60,
+        // Downscale: a profile avatar renders at 120px, so a big image just
+        // bloats memory and (as a data URL) overflows the ~5MB localStorage
+        // quota. 600px keeps it sharp while staying small.
+        width: 600,
+        height: 600,
         allowEditing: false,
         resultType: CameraResultType.DataUrl,
         source: CameraSource.Prompt,
@@ -1374,7 +1382,6 @@ const addListingPhotos = useCallback(async (fileList, source = 'camera') => {
     }
     if (!dataUrl) return;
 
-    // Mirror the previous handler: persist the photo locally and update state.
     const currentUser = JSON.parse(localStorage.getItem('swipecity_demo_user') || '{}');
     const updatedUser = {
       ...currentUser,
@@ -1384,15 +1391,10 @@ const addListingPhotos = useCallback(async (fileList, source = 'camera') => {
       onboardingComplete: true,
       photoUpdatedAt: Date.now()
     };
-    localStorage.setItem('swipecity_demo_user', JSON.stringify(updatedUser));
-    localStorage.setItem('swipecity_mock_user', JSON.stringify(updatedUser));
-    localStorage.setItem('swipecity_user', JSON.stringify(updatedUser));
-    localStorage.setItem('swipecity_native_user', JSON.stringify(updatedUser));
-    if (updatedUser.email) {
-      const userKey = `swipecity_user_${updatedUser.email.replace(/[@+.]/g, '_')}`;
-      localStorage.setItem(userKey, JSON.stringify(updatedUser));
-    }
 
+    // Update the UI FIRST so the avatar shows immediately — this must not be
+    // blocked by a localStorage write (which can throw QuotaExceededError on a
+    // large photo and would otherwise abort before the photo ever displayed).
     setUser(() => ({ ...updatedUser }));
     setUserProfile(() => ({ ...updatedUser }));
     setGlobalUser(() => ({ ...updatedUser }));
@@ -1403,6 +1405,19 @@ const addListingPhotos = useCallback(async (fileList, source = 'camera') => {
       forcePhotoRefresh: Math.random()
     });
     setTimeout(() => updateState({ photoUploadMessage: null }), 2000);
+
+    // Then persist locally, best-effort. Quota errors here don't affect display.
+    try {
+      localStorage.setItem('swipecity_demo_user', JSON.stringify(updatedUser));
+      localStorage.setItem('swipecity_user', JSON.stringify(updatedUser));
+      localStorage.setItem('swipecity_native_user', JSON.stringify(updatedUser));
+      if (updatedUser.email) {
+        const userKey = `swipecity_user_${updatedUser.email.replace(/[@+.]/g, '_')}`;
+        localStorage.setItem(userKey, JSON.stringify(updatedUser));
+      }
+    } catch (storageErr) {
+      console.warn('Profile photo saved in-session but not persisted to storage:', storageErr?.message);
+    }
   }, [user, updateState, setUser, setUserProfile]);
 
 const handleSaveForLater = useCallback(() => {
