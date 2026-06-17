@@ -1,6 +1,6 @@
 import React, { useState, useEffect, createContext, useContext, useCallback, useMemo, Component } from 'react';
 import { MessageCircle, User, LogOut, Camera } from 'lucide-react';
-import { Camera as CapacitorCamera, CameraResultType, CameraSource } from '@capacitor/camera';
+import { Camera as CapacitorCamera, CameraResultType, CameraSource, CameraDirection } from '@capacitor/camera';
 import AdminDashboard from './components/AdminDashboard';
 import SkeletonCard from './components/SkeletonCard';
 import { SwipeFeedback, LoadingSpinner, MatchSuccessAnimation } from './components/SwipeFeedback';
@@ -1345,6 +1345,65 @@ const addListingPhotos = useCallback(async (fileList, source = 'camera') => {
     };
     updateState({ [stateKey]: [...currentImages, newImage] });
   }, [appState.selectedImages, appState.editImages, updateState]);
+
+  // Set the profile photo via the native Camera plugin. Same reasoning as the
+  // listing camera: the old <input type="file" capture="user"> reloaded the
+  // WKWebView on iOS when the camera closed, which bounced the user into the
+  // onboarding survey. CameraSource.Prompt lets the user pick Camera or Photo
+  // Library natively without evicting the web view.
+  const chooseProfilePhoto = useCallback(async () => {
+    if (!user) return;
+
+    let dataUrl;
+    try {
+      const photo = await CapacitorCamera.getPhoto({
+        quality: 70,
+        allowEditing: false,
+        resultType: CameraResultType.DataUrl,
+        source: CameraSource.Prompt,
+        direction: CameraDirection.Front,
+        saveToGallery: false
+      });
+      dataUrl = photo?.dataUrl;
+    } catch (err) {
+      const msg = err?.message || '';
+      if (msg && !/cancel/i.test(msg)) {
+        console.error('Profile photo capture failed:', err);
+      }
+      return;
+    }
+    if (!dataUrl) return;
+
+    // Mirror the previous handler: persist the photo locally and update state.
+    const currentUser = JSON.parse(localStorage.getItem('swipecity_demo_user') || '{}');
+    const updatedUser = {
+      ...currentUser,
+      ...user,
+      photoURL: dataUrl,
+      avatar_url: dataUrl,
+      onboardingComplete: true,
+      photoUpdatedAt: Date.now()
+    };
+    localStorage.setItem('swipecity_demo_user', JSON.stringify(updatedUser));
+    localStorage.setItem('swipecity_mock_user', JSON.stringify(updatedUser));
+    localStorage.setItem('swipecity_user', JSON.stringify(updatedUser));
+    localStorage.setItem('swipecity_native_user', JSON.stringify(updatedUser));
+    if (updatedUser.email) {
+      const userKey = `swipecity_user_${updatedUser.email.replace(/[@+.]/g, '_')}`;
+      localStorage.setItem(userKey, JSON.stringify(updatedUser));
+    }
+
+    setUser(() => ({ ...updatedUser }));
+    setUserProfile(() => ({ ...updatedUser }));
+    setGlobalUser(() => ({ ...updatedUser }));
+    updateState({
+      uploadingPhoto: false,
+      photoUploadMessage: 'Photo saved!',
+      lastPhotoUpdate: Date.now(),
+      forcePhotoRefresh: Math.random()
+    });
+    setTimeout(() => updateState({ photoUploadMessage: null }), 2000);
+  }, [user, updateState, setUser, setUserProfile]);
 
 const handleSaveForLater = useCallback(() => {
     console.log('💾 Save for Later clicked');
@@ -5807,10 +5866,7 @@ if (!appState.showAddItem) {
                   display: 'inline-block',
                   cursor: 'pointer'
                 }}
-                onClick={() => {
-                  const input = document.getElementById('buyer-profile-photo-input');
-                  if (input) input.click();
-                }}
+                onClick={chooseProfilePhoto}
                 >
                   <img
                     key={`profile-photo-${userProfile?.photoUpdatedAt || user?.photoUpdatedAt || appState.lastPhotoUpdate || appState.forcePhotoRefresh || 'default'}`}
@@ -6621,10 +6677,7 @@ if (!appState.showAddItem) {
                   marginBottom: '15px',
                   cursor: 'pointer'
                 }}
-                onClick={() => {
-                  const input = document.getElementById('profile-photo-input');
-                  if (input) input.click();
-                }}
+                onClick={chooseProfilePhoto}
               >
                 <img
                   key={`seller-profile-photo-${userProfile?.photoUpdatedAt || user?.photoUpdatedAt || appState.lastPhotoUpdate || appState.forcePhotoRefresh || 'default'}`}
