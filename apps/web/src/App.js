@@ -356,17 +356,6 @@ const SwipeMarketplace = () => {
     }
   }, [user, isAuthenticated]);
 
-  // Hydrate saved items from the user's persisted profile on load, so a buyer's
-  // saved items survive relaunch (they are now persisted via saveItemToProfile).
-  // Loop-safe: once appState.savedItems is populated the condition is false.
-  useEffect(() => {
-    const profileSaved = userProfile?.savedItems;
-    if (Array.isArray(profileSaved) && profileSaved.length > 0 &&
-        (!appState.savedItems || appState.savedItems.length === 0)) {
-      updateState({ savedItems: profileSaved });
-    }
-  }, [userProfile?.savedItems, appState.savedItems, updateState]);
-
   // Sync auth states from modal
   useEffect(() => {
     const interval = setInterval(() => {
@@ -829,6 +818,19 @@ const SwipeMarketplace = () => {
   const updateState = useCallback((updates) => {
     setAppState(prev => ({ ...prev, ...updates }));
   }, []);
+
+  // Hydrate saved items from the user's persisted profile on load, so a buyer's
+  // saved items survive relaunch (they are now persisted via saveItemToProfile).
+  // Loop-safe: once appState.savedItems is populated the condition is false.
+  // NOTE: must be declared AFTER appState/updateState — referencing them in the
+  // deps array before their declaration throws a temporal-dead-zone error.
+  useEffect(() => {
+    const profileSaved = userProfile?.savedItems;
+    if (Array.isArray(profileSaved) && profileSaved.length > 0 &&
+        (!appState.savedItems || appState.savedItems.length === 0)) {
+      updateState({ savedItems: profileSaved });
+    }
+  }, [userProfile?.savedItems, appState.savedItems, updateState]);
 
   // Helper function to open a chat with fresh data from Firebase/localStorage
   const openChat = useCallback(async (chat) => {
