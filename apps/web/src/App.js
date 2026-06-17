@@ -5869,8 +5869,13 @@ if (!appState.showAddItem) {
           </div>
         )}
 
-        {/* Profile Panel */}
-        {appState.showProfile && (
+        {/* Profile Panel — DISABLED: this seller-branch panel duplicated the
+            shared profile panel below (which renders in both modes), causing two
+            overlapping panels in seller mode. The shared panel is the full-featured
+            one (real dashboard + Delete Account). This block also held a dead
+            "View Analytics" button. Kept disabled rather than deleted to avoid a
+            risky ~800-line removal in this render tree. */}
+        {false && appState.showProfile && (
           <div style={{
             position: 'fixed',
             top: 'max(0px, env(safe-area-inset-top))',
@@ -7353,6 +7358,83 @@ if (!appState.showAddItem) {
                       <div style={{ fontSize: '12px', color: '#666' }}>Avg Response Time</div>
                     </div>
                   </div>
+                </div>
+
+                {/* Seller-mode Sign Out + Delete Account. App Store 5.1.1(v)
+                    requires in-app account deletion to be reachable; the buyer
+                    branch has its own copy, so a reviewer landing in seller mode
+                    must be able to delete here too. */}
+                <div style={{ marginTop: '15px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <button
+                    onClick={async () => {
+                      try {
+                        const result = await signOut();
+                        if (!result.success) {
+                          alert('Sign out failed: ' + (result.error || 'Unknown error'));
+                        }
+                      } catch (error) {
+                        alert('Sign out failed. Please try again.');
+                      }
+                    }}
+                    style={{
+                      width: '100%',
+                      background: '#ef4444',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '8px',
+                      padding: '10px',
+                      fontWeight: 'bold',
+                      cursor: 'pointer',
+                      fontSize: '13px'
+                    }}
+                  >
+                    👋 Sign Out
+                  </button>
+
+                  <button
+                    onClick={async () => {
+                      if (!window.confirm('Are you sure you want to delete your account? This action cannot be undone and will permanently delete all your data including messages, saved items, and listings.')) {
+                        return;
+                      }
+                      if (!deleteAccount) return;
+                      try {
+                        let deleteResult = await deleteAccount();
+                        const needsRecentLogin = !deleteResult.success &&
+                          /CREDENTIAL_TOO_OLD|LOGIN_AGAIN|recent login/i.test(deleteResult.error || '');
+                        if (needsRecentLogin && reauthenticate) {
+                          const password = window.prompt('For your security, please re-enter your password to delete your account:');
+                          if (!password) return;
+                          const reauth = await reauthenticate(password);
+                          if (!reauth.success) {
+                            alert('Could not verify your password: ' + (reauth.error || 'please try again.'));
+                            return;
+                          }
+                          deleteResult = await deleteAccount();
+                        }
+                        if (deleteResult.success) {
+                          alert('Your account has been deleted successfully.');
+                          window.location.reload();
+                        } else {
+                          alert('Failed to delete account: ' + (deleteResult.error || 'Please try signing out and back in, then try again.'));
+                        }
+                      } catch (error) {
+                        alert('Failed to delete account. Please try again or contact support.');
+                      }
+                    }}
+                    style={{
+                      width: '100%',
+                      background: 'transparent',
+                      color: '#ef4444',
+                      border: '1px solid #ef4444',
+                      borderRadius: '8px',
+                      padding: '10px',
+                      fontWeight: 'bold',
+                      cursor: 'pointer',
+                      fontSize: '13px'
+                    }}
+                  >
+                    🗑️ Delete Account
+                  </button>
                 </div>
               </>
             )}
