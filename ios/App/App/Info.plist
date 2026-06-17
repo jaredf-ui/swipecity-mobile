@@ -51,10 +51,6 @@
 	<string>SwipeCity needs photo library access to select photos of items you want to sell</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>SwipeCity needs to save photos to your photo library</string>
-	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>SwipeCity uses your location to show items available near you. Your exact location is never shared with other users.</string>
-	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>SwipeCity uses your location to show items available near you. Your exact location is never shared with other users.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSExceptionDomains</key>
