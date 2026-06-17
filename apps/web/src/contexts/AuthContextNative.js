@@ -269,8 +269,13 @@ export const AuthProvider = ({ children }) => {
       console.log('🔓 Clearing user state...');
       setUser(null);
       setUserProfile(null);
+      // Also clear the module-level global user + notify listeners (signIn/signUp
+      // set it, so signOut must clear it or stale auth state lingers).
+      if (window.setGlobalUser) {
+        window.setGlobalUser(null);
+      }
       console.log('🔓 User state cleared');
-      
+
       console.log('✅ SignOut completed successfully');
       return { success: true };
     } catch (error) {

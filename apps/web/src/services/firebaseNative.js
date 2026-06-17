@@ -416,6 +416,9 @@ export class FirebaseNativeService {
     if (!this.idToken) {
       throw new Error('User not authenticated');
     }
+    // Refresh a stale token first (ensureValidToken now refreshes by age) so an
+    // aged session doesn't fail the Auth update with INVALID_ID_TOKEN.
+    try { await this.ensureValidToken(); } catch (e) { /* keep going with existing token */ }
 
     try {
       const response = await nativeHttp.post(`${this.authUrl}:update?key=${this.apiKey}`, {

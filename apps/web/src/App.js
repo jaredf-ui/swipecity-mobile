@@ -20,6 +20,19 @@ import CloseButton from './components/CloseButton';
 import LoadingScreen from './components/LoadingScreen';
 import ErrorScreen from './components/ErrorScreen';
 
+// Safely parse a JSON value from localStorage. `|| '{}'` only covers a MISSING
+// key, not a corrupt/truncated value — an unguarded JSON.parse in a render or
+// event handler would throw and crash the app via the ErrorBoundary.
+const safeParseLocal = (key, fallback = {}) => {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch (e) {
+    console.warn('[storage] failed to parse', key, '-', e?.message);
+    return fallback;
+  }
+};
+
 // Inline shared data for Capacitor compatibility
 const mockItems = [
   {
@@ -35,6 +48,7 @@ const mockItems = [
     condition: "Like New",
     likes_count: 47,
     category: "sneakers",
+    city: "Raleigh, NC",
     seller_id: "seller1",
     verified: true,
     seller_interested: true,
@@ -53,6 +67,7 @@ const mockItems = [
     condition: "Good",
     likes_count: 12,
     category: "vintage",
+    city: "Durham, NC",
     seller_id: "seller2",
     verified: true,
     seller_interested: false,
@@ -71,6 +86,7 @@ const mockItems = [
     condition: "Excellent",
     likes_count: 89,
     category: "electronics",
+    city: "Cary, NC",
     seller_id: "seller3",
     verified: false,
     seller_interested: true,
@@ -1400,7 +1416,7 @@ const addListingPhotos = useCallback(async (fileList, source = 'camera') => {
     }
     if (!dataUrl) return;
 
-    const currentUser = JSON.parse(localStorage.getItem('swipecity_demo_user') || '{}');
+    const currentUser = safeParseLocal('swipecity_demo_user');
     const updatedUser = {
       ...currentUser,
       ...user,
@@ -2084,7 +2100,7 @@ useEffect(() => {
         const userData = {
           id: user.uid,
           email: user.email,
-          username: SecurityUtils.sanitizeInput(user.displayName || user.email.split('@')[0]),
+          username: SecurityUtils.sanitizeInput(user.displayName || user.email?.split('@')[0] || 'user'),
           avatar_url: user.photoURL || 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=face',
           onboardingComplete: false,
           verified: user.emailVerified,
@@ -3221,8 +3237,9 @@ if (!appState.showAddItem) {
                       }
                       
                       // FAST badge: Quick response time (under 2 hours)
-                      const responseHours = parseFloat(seller.responseTime.replace(/[^0-9.]/g, ''));
-                      const responseUnit = seller.responseTime.includes('m') ? 'minutes' : 'hours';
+                      const sellerRt = seller.responseTime || '';
+                      const responseHours = parseFloat(sellerRt.replace(/[^0-9.]/g, ''));
+                      const responseUnit = sellerRt.includes('m') ? 'minutes' : 'hours';
                       const actualHours = responseUnit === 'minutes' ? responseHours / 60 : responseHours;
                       if (actualHours <= 2) {
                         badges.push('fast-responder');
@@ -4876,8 +4893,9 @@ if (!appState.showAddItem) {
                               }
                               
                               // FAST badge: Quick response time (under 2 hours)
-                              const responseHours = parseFloat(buyer.responseTime.replace(/[^0-9.]/g, ''));
-                              const responseUnit = buyer.responseTime.includes('m') ? 'minutes' : 'hours';
+                              const buyerRt = buyer.responseTime || '';
+                              const responseHours = parseFloat(buyerRt.replace(/[^0-9.]/g, ''));
+                              const responseUnit = buyerRt.includes('m') ? 'minutes' : 'hours';
                               const actualHours = responseUnit === 'minutes' ? responseHours / 60 : responseHours;
                               if (actualHours <= 2) {
                                 buyerBadges.push('fast-responder');
@@ -6003,7 +6021,7 @@ if (!appState.showAddItem) {
                         console.log('📷 [ANDROID] Photo loaded, size:', imageUrl.length, 'bytes');
                         
                         // Get fresh user data from localStorage
-                        const currentUser = JSON.parse(localStorage.getItem('swipecity_demo_user') || '{}');
+                        const currentUser = safeParseLocal('swipecity_demo_user');
                         console.log('📷 [ANDROID] Current user:', currentUser.email);
                         
                         // Create updated user with photo
@@ -6087,7 +6105,7 @@ if (!appState.showAddItem) {
                             console.log('✅ [ANDROID] Firebase Storage upload successful:', result.url);
                             
                             // Get current user data
-                            const currentUser = JSON.parse(localStorage.getItem('swipecity_demo_user') || '{}');
+                            const currentUser = safeParseLocal('swipecity_demo_user');
                             const updatedUserWithFirebaseURL = { 
                               ...currentUser,
                               photoURL: result.url, // Update to Firebase URL
@@ -6200,7 +6218,7 @@ if (!appState.showAddItem) {
                             console.log(`📝 [${platform.toUpperCase()}] Current tempBio:`, appState.tempBio);
                             
                             // Get ALL user data
-                            const currentUser = JSON.parse(localStorage.getItem('swipecity_demo_user') || '{}');
+                            const currentUser = safeParseLocal('swipecity_demo_user');
                             console.log(`📝 [${platform.toUpperCase()}] Current user from localStorage:`, currentUser.email);
                             
                             const updatedUser = { 
@@ -6807,7 +6825,7 @@ if (!appState.showAddItem) {
                       console.log('📷 Photo loaded, updating user profile...');
                       
                       // Update the current user profile with the new photo (preserve onboarding status)
-                      const currentUser = JSON.parse(localStorage.getItem('swipecity_demo_user') || '{}');
+                      const currentUser = safeParseLocal('swipecity_demo_user');
                       const updatedUser = { 
                         ...currentUser, 
                         photoURL: imageUrl,
@@ -6889,7 +6907,7 @@ if (!appState.showAddItem) {
                         console.log('✅ [ANDROID DEBUG] Seller mode Firebase upload successful:', result.url);
                         
                         // Get current user data and update with Firebase URL
-                        const currentUser = JSON.parse(localStorage.getItem('swipecity_demo_user') || '{}');
+                        const currentUser = safeParseLocal('swipecity_demo_user');
                         const updatedUserWithFirebaseURL = { 
                           ...currentUser, 
                           photoURL: result.url, // Use Firebase URL instead of data URL
@@ -7020,7 +7038,7 @@ if (!appState.showAddItem) {
                           console.log(`📝 [${platform.toUpperCase()}] Current tempBio:`, appState.tempBio);
                           
                           // Get ALL user data
-                          const currentUser = JSON.parse(localStorage.getItem('swipecity_demo_user') || '{}');
+                          const currentUser = safeParseLocal('swipecity_demo_user');
                           console.log(`📝 [${platform.toUpperCase()}] Current user from localStorage:`, currentUser.email);
                           
                           const updatedUser = { 
@@ -8335,29 +8353,36 @@ if (typeof window !== 'undefined') {
   
   // Auto-create demo user for first-time users
   const initializeDemoUser = () => {
-    const hasUser = localStorage.getItem('swipecity_user') || 
-                    localStorage.getItem('swipecity_native_user') || 
-                    localStorage.getItem('swipecity_demo_user');
-    
-    if (!hasUser) {
-      const demoUser = {
-        uid: 'demo_user_' + Date.now(),
-        email: 'demo@swipecity.app',
-        displayName: 'Demo User',
-        emailVerified: true,
-        photoURL: null,
-        onboardingComplete: true,
-        bio: 'Demo user',
-        created_at: Date.now(),
-        verified: true
-      };
-      
-      localStorage.setItem('swipecity_demo_user', JSON.stringify(demoUser));
-      
-      // Trigger auth listeners
-      if (window.setGlobalUser) {
-        window.setGlobalUser(demoUser);
+    // Wrap in try/catch: this runs at module init via setTimeout, and any
+    // localStorage access can throw (private mode / quota), which would surface
+    // as an unhandled error rather than being safely ignored.
+    try {
+      const hasUser = localStorage.getItem('swipecity_user') ||
+                      localStorage.getItem('swipecity_native_user') ||
+                      localStorage.getItem('swipecity_demo_user');
+
+      if (!hasUser) {
+        const demoUser = {
+          uid: 'demo_user_' + Date.now(),
+          email: 'demo@swipecity.app',
+          displayName: 'Demo User',
+          emailVerified: true,
+          photoURL: null,
+          onboardingComplete: true,
+          bio: 'Demo user',
+          created_at: Date.now(),
+          verified: true
+        };
+
+        localStorage.setItem('swipecity_demo_user', JSON.stringify(demoUser));
+
+        // Trigger auth listeners
+        if (window.setGlobalUser) {
+          window.setGlobalUser(demoUser);
+        }
       }
+    } catch (e) {
+      console.warn('initializeDemoUser skipped:', e?.message);
     }
   };
   
