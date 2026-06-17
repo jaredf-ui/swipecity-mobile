@@ -1507,13 +1507,13 @@ const resetTutorial = useCallback(() => {
 
 const handleExpressInterest = useCallback((item) => {
   console.log('🎯 Expressing interest in:', item.title);
-  
+
   // Create a new interest entry
   const newInterest = {
     id: `interest_${Date.now()}`,
     itemId: item.id,
-    buyerId: user?.id || 'user123',
-    buyerName: user?.username || 'You',
+    buyerId: user?.uid || user?.id || 'user123',
+    buyerName: user?.displayName || user?.username || 'You',
     buyerAvatar: user?.avatar_url || 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=face',
     sellerId: item.seller_id,
     sellerName: item.seller_name,
@@ -1522,14 +1522,25 @@ const handleExpressInterest = useCallback((item) => {
     timestamp: Date.now(),
     status: 'pending'
   };
-  
-  // Add interest to buyerInterests array
-  updateState({ 
+
+  // Add interest to buyerInterests array (drives same-session UI)
+  updateState({
     buyerInterests: [...appState.buyerInterests, newInterest],
     showInterestConfirmation: true,
     interestedItem: item
   });
-  
+
+  // Persist the interest so it is recorded beyond this session. Writes to
+  // Firebase when available on this platform, else localStorage. NOTE: a seller
+  // signed into a *different* account/device still won't receive this until the
+  // Firestore read layer (an incoming-interests inbox) is built — see the
+  // pre-submission audit; the data is captured now so that work can light up.
+  try {
+    DataService.createInterest(newInterest);
+  } catch (err) {
+    console.warn('createInterest failed:', err?.message);
+  }
+
   console.log(`✅ Interest submitted for ${item.title} - awaiting seller approval`);
 }, [user, appState.buyerInterests, updateState]);
 
@@ -5371,7 +5382,7 @@ if (!appState.showAddItem) {
 
           {/* Submit Button */}
           <button
-            onClick={() => {
+            onClick={async () => {
               if (!appState.newItemTitle || !appState.newItemPrice || !appState.newItemCondition || !appState.newItemCity) {
                 alert('Please fill in all required fields');
                 return;
@@ -5389,17 +5400,41 @@ if (!appState.showAddItem) {
                 price: appState.newItemPrice,
                 condition: appState.newItemCondition,
                 city: SecurityUtils.sanitizeInputFinal(appState.newItemCity),
+                // also set `location` since the feed filter checks city||location
+                location: SecurityUtils.sanitizeInputFinal(appState.newItemCity),
                 description: SecurityUtils.sanitizeInputFinal(appState.newItemDescription),
                 images: appState.selectedImages,
-                seller_id: user?.id || 'user123',
-                seller_name: user?.username || 'You',
+                seller_id: user?.uid || user?.id || 'user123',
+                seller_name: user?.displayName || user?.username || 'You',
                 created_at: Date.now(),
                 status: 'active'
               };
 
+              // Persist the listing so it survives relaunch and reaches the buyer
+              // feed. DataService.createItem writes to Firebase when available on
+              // this platform, otherwise to localStorage (so it still persists and
+              // is re-loaded into the feed on next launch). Previously this handler
+              // only touched in-memory state, so listings vanished and no buyer
+              // ever saw them.
+              let savedListing = newListing;
+              try {
+                const saved = await DataService.createItem(newListing);
+                if (saved) savedListing = { ...newListing, ...saved };
+              } catch (err) {
+                console.warn('createItem failed; keeping listing locally:', err?.message);
+              }
+
+              // Surface it in the buyer feed immediately. Merge onto the CURRENT
+              // feed (seeded items, or the mock fallback when seeded is empty) so
+              // the feed never collapses to just this one item.
+              setSeededItems(prev => {
+                const base = (prev && prev.length > 0) ? prev : mockItems;
+                return [savedListing, ...base];
+              });
+
               // Add to user listings
               updateState({
-                userListings: [...(appState.userListings || []), newListing],
+                userListings: [...(appState.userListings || []), savedListing],
                 showAddItem: false,
                 selectedImages: [],
                 newItemTitle: '',
