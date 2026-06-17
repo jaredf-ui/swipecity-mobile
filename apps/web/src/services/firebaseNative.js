@@ -613,33 +613,47 @@ export class FirebaseNativeService {
    * Upload file to Firebase Storage
    */
   async uploadFile(path, file) {
-    // Make sure the token is fresh — like accounts:delete, a Storage upload
-    // with an expired ID token is rejected (a token restored from storage or
-    // minted at an earlier sign-in is often stale by upload time).
+    const base64Data = await this.fileToBase64(file);
+    return this.uploadBase64(path, base64Data, file.type || 'image/jpeg');
+  }
+
+  /**
+   * Upload raw base64 image data to Firebase Storage and return a publicly
+   * fetchable download URL.
+   *
+   * Two things that were previously broken/missing and are now fixed:
+   * 1. The iOS HTTP layer (nativeHttp/Capacitor) can only send TEXT, not binary.
+   *    The old code POSTed the base64 STRING with Content-Type image/jpeg, so
+   *    Storage saved the base64 text verbatim and it rendered as garbage. We now
+   *    send the `Content-Transfer-Encoding: base64` header so Storage decodes the
+   *    body into real image bytes.
+   * 2. We read the download token from the upload RESPONSE and build the URL with
+   *    it. Without `?alt=media&token=...`, other users get a 403. If several
+   *    tokens are returned (comma-separated) we use the first.
+   *
+   * `base64Data` must be the bare base64 (no `data:...;base64,` prefix).
+   */
+  async uploadBase64(path, base64Data, contentType = 'image/jpeg') {
+    // Storage rejects a stale token; refresh proactively (iOS sessions sit for hours).
     if (this.refreshToken) {
-      try {
-        await this.refreshIdToken();
-      } catch (refreshError) {
-        console.error('[Storage] Pre-upload token refresh failed:', refreshError);
-      }
+      try { await this.refreshIdToken(); } catch (e) { console.error('[Storage] pre-upload refresh failed:', e?.message); }
     }
     try {
       await this.ensureValidToken();
     } catch (tokenError) {
-      throw new Error('User not authenticated');
+      return { success: false, error: 'User not authenticated' };
     }
 
     try {
-      // Convert file to base64 for upload
-      const base64Data = await this.fileToBase64(file);
-
       const doUpload = () => nativeHttp.post(
         `${this.storageUrl}/${encodeURIComponent(path)}?key=${this.apiKey}`,
         base64Data,
         {
           headers: {
             'Authorization': `Bearer ${this.idToken}`,
-            'Content-Type': file.type
+            'Content-Type': contentType,
+            // Tell Storage the body is base64 so it decodes to real bytes.
+            'Content-Transfer-Encoding': 'base64'
           }
         }
       );
@@ -654,9 +668,16 @@ export class FirebaseNativeService {
       }
 
       if (response.ok) {
-        // Get download URL
-        const downloadUrl = await this.getDownloadURL(path);
-        return { success: true, url: downloadUrl };
+        // Prefer the token from the upload response; fall back to a metadata GET.
+        const tokens = response.data?.downloadTokens;
+        let url;
+        if (tokens) {
+          const firstToken = String(tokens).split(',')[0];
+          url = `${this.storageUrl}/${encodeURIComponent(path)}?alt=media&token=${firstToken}`;
+        } else {
+          url = await this.getDownloadURL(path);
+        }
+        return { success: true, url };
       }
 
       return { success: false, error: response.data?.error?.message || 'Upload failed' };
@@ -664,6 +685,27 @@ export class FirebaseNativeService {
       console.error('[Storage] Upload error:', error);
       return { success: false, error: error.message };
     }
+  }
+
+  /**
+   * Upload an image given as a data URL (data:image/jpeg;base64,XXXX) — the form
+   * listing photos and profile photos are captured in. Returns { success, url }.
+   */
+  async uploadDataUrl(path, dataUrl) {
+    if (!dataUrl || typeof dataUrl !== 'string') {
+      return { success: false, error: 'No image data' };
+    }
+    // Already a hosted URL (e.g. a seeded https link) — nothing to upload.
+    if (/^https?:\/\//i.test(dataUrl)) {
+      return { success: true, url: dataUrl };
+    }
+    const match = dataUrl.match(/^data:([^;]+);base64,(.*)$/);
+    if (!match) {
+      return { success: false, error: 'Unsupported image format' };
+    }
+    const contentType = match[1] || 'image/jpeg';
+    const base64Data = match[2];
+    return this.uploadBase64(path, base64Data, contentType);
   }
 
   /**
@@ -888,6 +930,183 @@ export class FirebaseNativeService {
    */
   isAuthenticated() {
     return this.currentUser !== null && this.idToken !== null;
+  }
+
+  // ==================== CROSS-DEVICE DATA LAYER (Firestore REST) ====================
+  // Items, interests, and chats over Firestore REST so they sync across users/
+  // devices on iOS (the web SDK is unreliable in the WebView). All field names are
+  // snake_case to match firestore.rules. Every call refreshes a stale token and
+  // retries once on 401. Queries avoid orderBy (sorted in-app) to skip needing
+  // composite indexes.
+
+  // Authenticated Firestore request with 401 -> refresh -> retry-once.
+  async _fsRequest(method, url, body) {
+    try { await this.ensureValidToken(); } catch (e) { /* may be an unauth read */ }
+    const headers = {
+      'Authorization': this.idToken ? `Bearer ${this.idToken}` : undefined,
+      'Content-Type': 'application/json'
+    };
+    const call = () => {
+      if (method === 'GET') return nativeHttp.get(url, { headers });
+      if (method === 'PATCH') return nativeHttp.patch(url, body, { headers });
+      if (method === 'DELETE') return nativeHttp.delete(url, { headers });
+      return nativeHttp.post(url, body, { headers });
+    };
+    let response = await call();
+    if (!response.ok &&
+        (response.status === 401 || response.data?.error?.message?.includes('INVALID_ID_TOKEN')) &&
+        this.refreshToken) {
+      await this.refreshIdToken();
+      headers.Authorization = `Bearer ${this.idToken}`;
+      response = await call();
+    }
+    return response;
+  }
+
+  _docId(name) {
+    return (name || '').split('/').pop();
+  }
+
+  // Run a Firestore structured query; returns parsed docs (each with .id).
+  async runQuery(structuredQuery, parentPath = '') {
+    const url = `${this.firestoreUrl}${parentPath}:runQuery?key=${this.apiKey}`;
+    const response = await this._fsRequest('POST', url, { structuredQuery });
+    if (!response.ok) {
+      console.error('[Firestore] runQuery failed:', response.data?.error?.message || response.status);
+      return [];
+    }
+    const rows = Array.isArray(response.data) ? response.data : [];
+    return rows.filter(r => r && r.document).map(r => {
+      const parsed = this.parseFirestoreDocument(r.document);
+      parsed.id = this._docId(r.document.name);
+      return parsed;
+    });
+  }
+
+  // ---- Items ----
+  async createItem(item) {
+    if (!this.currentUser?.uid) return { success: false, error: 'Not authenticated' };
+    const data = {
+      ...item,
+      seller_id: this.currentUser.uid, // must equal auth.uid per rules
+      status: item.status || 'active',
+      created_at: item.created_at || Date.now()
+    };
+    const response = await this._fsRequest('POST', `${this.firestoreUrl}/items?key=${this.apiKey}`, this.createFirestoreDocument(data));
+    if (!response.ok) return { success: false, error: response.data?.error?.message || 'createItem failed' };
+    return { success: true, item: { ...data, id: this._docId(response.data.name) } };
+  }
+
+  async getActiveItems(limitN = 200) {
+    return this.runQuery({
+      from: [{ collectionId: 'items' }],
+      where: { fieldFilter: { field: { fieldPath: 'status' }, op: 'EQUAL', value: { stringValue: 'active' } } },
+      limit: limitN
+    });
+  }
+
+  async getMyItems(uid) {
+    if (!uid) return [];
+    return this.runQuery({
+      from: [{ collectionId: 'items' }],
+      where: { fieldFilter: { field: { fieldPath: 'seller_id' }, op: 'EQUAL', value: { stringValue: uid } } },
+      limit: 200
+    });
+  }
+
+  // ---- Interests ----
+  async createInterest(interest) {
+    if (!this.currentUser?.uid) return { success: false, error: 'Not authenticated' };
+    // Hard-map to snake_case (callers may pass camelCase); buyer_id must be auth.uid.
+    const data = {
+      item_id: interest.item_id ?? interest.itemId,
+      buyer_id: this.currentUser.uid,
+      buyer_name: interest.buyer_name ?? interest.buyerName,
+      buyer_avatar: interest.buyer_avatar ?? interest.buyerAvatar,
+      seller_id: interest.seller_id ?? interest.sellerId,
+      seller_name: interest.seller_name ?? interest.sellerName,
+      item_title: interest.item_title ?? interest.itemTitle,
+      item_image: interest.item_image ?? interest.itemImage,
+      status: 'pending',
+      created_at: Date.now()
+    };
+    const response = await this._fsRequest('POST', `${this.firestoreUrl}/interests?key=${this.apiKey}`, this.createFirestoreDocument(data));
+    if (!response.ok) return { success: false, error: response.data?.error?.message || 'createInterest failed' };
+    return { success: true, interest: { ...data, id: this._docId(response.data.name) } };
+  }
+
+  async getIncomingInterests(sellerId) {
+    if (!sellerId) return [];
+    return this.runQuery({
+      from: [{ collectionId: 'interests' }],
+      where: { fieldFilter: { field: { fieldPath: 'seller_id' }, op: 'EQUAL', value: { stringValue: sellerId } } },
+      limit: 200
+    });
+  }
+
+  // Seller accepts/rejects. PATCH only `status` (updateMask) to satisfy the
+  // status-only rule.
+  async updateInterestStatus(interestId, status) {
+    if (!interestId) return { success: false, error: 'No interest id' };
+    const url = `${this.firestoreUrl}/interests/${interestId}?key=${this.apiKey}&updateMask.fieldPaths=status`;
+    const response = await this._fsRequest('PATCH', url, this.createFirestoreDocument({ status }));
+    return { success: response.ok, error: response.ok ? null : response.data?.error?.message };
+  }
+
+  // ---- Chats ----
+  // Both users derive the SAME chat id from sorted uids + item, so the buyer and
+  // seller share one chat document.
+  chatIdFor(uidA, uidB, itemId) {
+    const sorted = [uidA, uidB].sort();
+    return `chat_${sorted[0]}_${sorted[1]}_${itemId}`;
+  }
+
+  async createChatDoc(chatId, participants, meta = {}) {
+    const data = {
+      participants,
+      item_id: meta.item_id,
+      item_title: meta.item_title || '',
+      buyer_id: meta.buyer_id,
+      seller_id: meta.seller_id,
+      created_at: meta.created_at || Date.now()
+    };
+    const url = `${this.firestoreUrl}/chats/${chatId}?key=${this.apiKey}`;
+    const response = await this._fsRequest('PATCH', url, this.createFirestoreDocument(data));
+    return { success: response.ok, error: response.ok ? null : response.data?.error?.message, chatId };
+  }
+
+  async sendChatMessage(chatId, message) {
+    if (!this.currentUser?.uid) return { success: false, error: 'Not authenticated' };
+    const data = {
+      sender_id: this.currentUser.uid,
+      text: message.text ?? message.message ?? '',
+      created_at: Date.now()
+    };
+    const url = `${this.firestoreUrl}/chats/${chatId}/messages?key=${this.apiKey}`;
+    const response = await this._fsRequest('POST', url, this.createFirestoreDocument(data));
+    if (!response.ok) return { success: false, error: response.data?.error?.message };
+    return { success: true, message: { ...data, id: this._docId(response.data.name) } };
+  }
+
+  async loadChatMessages(chatId, limitN = 100) {
+    const url = `${this.firestoreUrl}/chats/${chatId}/messages?key=${this.apiKey}&pageSize=${limitN}`;
+    const response = await this._fsRequest('GET', url);
+    if (!response.ok) return [];
+    const docs = response.data?.documents || [];
+    return docs.map(d => {
+      const p = this.parseFirestoreDocument(d);
+      p.id = this._docId(d.name);
+      return p;
+    }).sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
+  }
+
+  async loadUserChats(uid) {
+    if (!uid) return [];
+    return this.runQuery({
+      from: [{ collectionId: 'chats' }],
+      where: { fieldFilter: { field: { fieldPath: 'participants' }, op: 'ARRAY_CONTAINS', value: { stringValue: uid } } },
+      limit: 200
+    });
   }
 }
 
