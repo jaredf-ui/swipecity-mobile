@@ -832,6 +832,29 @@ const SwipeMarketplace = () => {
     }
   }, [userProfile?.savedItems, appState.savedItems, updateState]);
 
+  // Hydrate the seller's own listings from localStorage so they survive relaunch
+  // and reappear in both "My Listings" and the buyer feed. Runs once, after auth
+  // (uid known) and the feed has finished loading (so it merges on top of the
+  // loaded feed rather than being overwritten by it).
+  const myListingsHydrated = React.useRef(false);
+  useEffect(() => {
+    if (myListingsHydrated.current) return;
+    if (!user?.uid || loadingItems) return;
+    myListingsHydrated.current = true;
+    let mine = [];
+    try {
+      const raw = localStorage.getItem('swipecity_my_listings_' + user.uid);
+      mine = raw ? JSON.parse(raw) : [];
+    } catch { mine = []; }
+    if (!Array.isArray(mine) || mine.length === 0) return;
+    updateState({ userListings: mine });
+    setSeededItems(prev => {
+      const ids = new Set((prev || []).map(i => i.id));
+      const fresh = mine.filter(m => m && !ids.has(m.id));
+      return fresh.length ? [...fresh, ...(prev || [])] : (prev || []);
+    });
+  }, [user?.uid, loadingItems, updateState]);
+
   // Helper function to open a chat with fresh data from Firebase/localStorage
   const openChat = useCallback(async (chat) => {
     if (!user?.email) {
@@ -5453,8 +5476,9 @@ if (!appState.showAddItem) {
               });
 
               // Add to user listings
+              const newUserListings = [...(appState.userListings || []), savedListing];
               updateState({
-                userListings: [...(appState.userListings || []), savedListing],
+                userListings: newUserListings,
                 showAddItem: false,
                 selectedImages: [],
                 newItemTitle: '',
@@ -5463,6 +5487,18 @@ if (!appState.showAddItem) {
                 newItemCondition: '',
                 newItemCity: ''
               });
+
+              // Persist the seller's own listings locally (keyed by uid) so they
+              // survive relaunch independent of the unreliable web SDK. Guarded:
+              // listing photos are data URLs, so a write can hit the storage
+              // quota — best-effort, never crash.
+              if (user?.uid) {
+                try {
+                  localStorage.setItem('swipecity_my_listings_' + user.uid, JSON.stringify(newUserListings));
+                } catch (e) {
+                  console.warn('[storage] could not persist my listings:', e?.message);
+                }
+              }
 
               alert('Item listed successfully! 🎉');
             }}
