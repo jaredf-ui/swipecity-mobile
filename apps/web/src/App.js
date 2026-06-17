@@ -340,6 +340,17 @@ const SwipeMarketplace = () => {
     }
   }, [user, isAuthenticated]);
 
+  // Hydrate saved items from the user's persisted profile on load, so a buyer's
+  // saved items survive relaunch (they are now persisted via saveItemToProfile).
+  // Loop-safe: once appState.savedItems is populated the condition is false.
+  useEffect(() => {
+    const profileSaved = userProfile?.savedItems;
+    if (Array.isArray(profileSaved) && profileSaved.length > 0 &&
+        (!appState.savedItems || appState.savedItems.length === 0)) {
+      updateState({ savedItems: profileSaved });
+    }
+  }, [userProfile?.savedItems, appState.savedItems, updateState]);
+
   // Sync auth states from modal
   useEffect(() => {
     const interval = setInterval(() => {
@@ -1459,16 +1470,23 @@ const handleSaveForLater = useCallback(() => {
     const newSavedItems = [...appState.savedItems, { ...currentItem, savedAt: Date.now() }];
     const nextIndex = appState.currentItemIndex < items.length - 1 ? appState.currentItemIndex + 1 : 0;
     
-    updateState({ 
+    updateState({
       savedItems: newSavedItems,
       dailySaveCount: appState.dailySaveCount + 1,
       currentItemIndex: nextIndex,
       lastActionTime: now,
       canUndo: false
     });
-    
+
+    // Persist to the user's Firebase profile (and localStorage) so saved items
+    // survive relaunch and sync — previously this was React-state-only and lost
+    // on every restart. saveItemToProfile is the AuthContext.saveItem helper.
+    if (user && saveItemToProfile) {
+      saveItemToProfile({ ...currentItem, savedAt: now });
+    }
+
     console.log(`✅ Saved ${currentItem.title} for later (${appState.dailySaveCount + 1}/${appState.maxDailySaves} today)`);
-}, [currentItem, appState.savedItems, appState.dailySaveCount, appState.maxDailySaves, appState.lastActionTime, appState.actionCooldown, appState.currentItemIndex, items.length, updateState]);
+}, [currentItem, appState.savedItems, appState.dailySaveCount, appState.maxDailySaves, appState.lastActionTime, appState.actionCooldown, appState.currentItemIndex, items.length, updateState, user, saveItemToProfile]);
 
 const showSwipeTutorial = useCallback(() => {
   updateState({ showSwipeTutorial: true });
@@ -7487,11 +7505,15 @@ if (!appState.showAddItem) {
               ) : (
                 appState.savedItems
                   .filter(item => {
-                    const query = appState.savedItemsSearchQuery.toLowerCase();
-                    return !query || 
-                      item.title.toLowerCase().includes(query) ||
-                      item.description.toLowerCase().includes(query) ||
-                      item.price.toString().includes(query);
+                    const query = (appState.savedItemsSearchQuery || '').toLowerCase();
+                    if (!query) return true;
+                    // Null-guard each field: a saved item from an older schema or
+                    // feed data missing description/price would otherwise throw a
+                    // TypeError here and crash the whole app via the ErrorBoundary.
+                    const title = (item.title || '').toLowerCase();
+                    const desc = (item.description || '').toLowerCase();
+                    const price = (item.price ?? '').toString().toLowerCase();
+                    return title.includes(query) || desc.includes(query) || price.includes(query);
                   })
                   .map((item, index) => (
                     <div key={item.id} style={{

@@ -31,7 +31,8 @@ export class FirebaseNativeService {
     this.currentUser = null;
     this.idToken = null;
     this.refreshToken = null;
-    
+    this.tokenTimestamp = null; // when the current idToken was minted (for age-based refresh)
+
     console.log('[Firebase Native] Service initialized');
   }
 
@@ -391,8 +392,20 @@ export class FirebaseNativeService {
     } else if (!this.idToken && !this.refreshToken) {
       console.error('[Firebase Auth] No tokens available - user needs to sign in again');
       throw new Error('User not authenticated - no tokens available');
+    } else if (this.idToken && this.refreshToken) {
+      // We have an ID token, but Firebase ID tokens expire after ~1h. A token
+      // restored from storage or minted at an earlier sign-in is frequently
+      // stale, and the old code assumed any present token was valid — which made
+      // getUserProfile/createUserProfile/etc. silently fail with INVALID_ID_TOKEN
+      // for returning users. Proactively refresh when the token is older than
+      // ~55 minutes.
+      const TOKEN_MAX_AGE_MS = 55 * 60 * 1000;
+      const age = this.tokenTimestamp ? (Date.now() - this.tokenTimestamp) : Infinity;
+      if (age > TOKEN_MAX_AGE_MS) {
+        console.log('[Firebase Auth] ID token is stale (age ms:', age, ') - refreshing...');
+        await this.refreshIdToken();
+      }
     }
-    // If we have an idToken, assume it's valid. If it fails, the calling method will trigger refresh
     console.log('[Firebase Auth] Token validation successful');
   }
 
@@ -478,6 +491,12 @@ export class FirebaseNativeService {
    */
   async getUserProfile(uid) {
     try {
+      // Ensure the token is fresh first. On app launch this runs with a token
+      // restored from storage that is often >1h old; without a refresh the read
+      // returns 401 and the user's latest profile/chats/saved items silently
+      // fail to sync. ensureValidToken now refreshes stale tokens by age.
+      try { await this.ensureValidToken(); } catch (e) { /* unauthenticated read; continue */ }
+
       const response = await nativeHttp.get(
         `${this.firestoreUrl}/users/${uid}?key=${this.apiKey}`,
         {
@@ -820,7 +839,8 @@ export class FirebaseNativeService {
         this.currentUser = userData;
         this.idToken = tokenData.idToken;
         this.refreshToken = tokenData.refreshToken;
-        
+        this.tokenTimestamp = tokenData.timestamp || null;
+
         console.log('[Firebase Auth] ✅ Authentication state restored from storage');
         console.log('[Firebase Auth] User:', userData.email);
         console.log('[Firebase Auth] Has ID token:', !!this.idToken);
@@ -843,17 +863,20 @@ export class FirebaseNativeService {
   saveAuthToStorage() {
     try {
       if (this.currentUser) {
-        localStorage.setItem('swipecity_native_user', JSON.stringify(this.currentUser));
+        try { localStorage.setItem('swipecity_native_user', JSON.stringify(this.currentUser)); }
+        catch (e) { console.warn('[Firebase Auth] could not persist user (quota?):', e?.message); }
       }
-      
+
       if (this.idToken && this.refreshToken) {
+        const now = Date.now();
+        this.tokenTimestamp = now;
         localStorage.setItem('swipecity_native_tokens', JSON.stringify({
           idToken: this.idToken,
           refreshToken: this.refreshToken,
-          timestamp: Date.now()
+          timestamp: now
         }));
       }
-      
+
       console.log('[Firebase Auth] Authentication state saved to storage');
     } catch (error) {
       console.error('[Firebase Auth] Failed to save auth state:', error);
