@@ -1487,12 +1487,23 @@ const addListingPhotos = useCallback(async (fileList, source = 'camera') => {
     }
     if (!dataUrl) return;
 
+    // Upload to Firebase Storage and keep only the (tiny) URL. Storing the
+    // base64 photo in the user object overflowed localStorage and crashed the
+    // app on relaunch. Falls back to the data URL if the upload fails.
+    let finalUrl = dataUrl;
+    try {
+      const res = await firebaseNative.uploadDataUrl(`profile-photos/${user.uid}/${Date.now()}.jpg`, dataUrl);
+      if (res && res.success && res.url) finalUrl = res.url;
+    } catch (e) {
+      console.warn('Profile photo upload failed; keeping local image:', e?.message);
+    }
+
     const currentUser = safeParseLocal('swipecity_demo_user');
     const updatedUser = {
       ...currentUser,
       ...user,
-      photoURL: dataUrl,
-      avatar_url: dataUrl,
+      photoURL: finalUrl,
+      avatar_url: finalUrl,
       onboardingComplete: true,
       photoUpdatedAt: Date.now()
     };
@@ -1519,6 +1530,11 @@ const addListingPhotos = useCallback(async (fileList, source = 'camera') => {
     const serialized = JSON.stringify(updatedUser);
     try { localStorage.setItem('swipecity_native_user', serialized); } catch (e) { /* over quota; in-session only */ }
     try { localStorage.setItem('swipecity_user', serialized); } catch (e) { /* over quota; in-session only */ }
+    // Sync the (tiny) photo URL to the Firestore profile so it survives reinstall
+    // and shows on other devices. Best-effort; only safe now that it's a URL.
+    if (finalUrl && finalUrl.startsWith('http')) {
+      try { firebaseNative.updateUserProfile(user.uid, { photoURL: finalUrl, avatar_url: finalUrl }); } catch (e) { /* best-effort */ }
+    }
   }, [user, updateState, setUser, setUserProfile]);
 
 const handleSaveForLater = useCallback(() => {
