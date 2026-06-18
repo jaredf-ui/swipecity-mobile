@@ -889,31 +889,31 @@ const SwipeMarketplace = () => {
     if (myListingsHydrated.current) return;
     if (!user?.uid || loadingItems) return;
     myListingsHydrated.current = true;
+    const uid = user.uid;
     (async () => {
-      // Local copy first (fast / offline fallback).
-      let mine = [];
+      const byId = new Map();
+      const add = (arr) => (arr || []).forEach(i => { if (i && i.id) byId.set(i.id, i); });
+
+      // 1) Local copy (fast / offline).
       try {
-        const raw = localStorage.getItem('swipecity_my_listings_' + user.uid);
-        mine = raw ? JSON.parse(raw) : [];
-      } catch { mine = []; }
-      // Authoritative: the seller's own listings from Firestore, so "My Listings"
-      // works cross-device / after a fresh sign-in (not just from this device's
-      // localStorage). Merge, deduped by id.
-      try {
-        const remote = await firebaseNative.getMyItems(user.uid);
-        if (Array.isArray(remote) && remote.length > 0) {
-          const ids = new Set(mine.map(m => m.id));
-          mine = [...mine, ...remote.filter(r => r && r.id && !ids.has(r.id))];
-        }
-      } catch (e) {
-        console.warn('getMyItems skipped:', e?.message);
-      }
-      if (!Array.isArray(mine) || mine.length === 0) return;
-      updateState({ userListings: mine });
-      // Also persist the merged set locally for fast offline reload.
-      try { localStorage.setItem('swipecity_my_listings_' + user.uid, JSON.stringify(mine)); } catch (e) {}
+        const raw = localStorage.getItem('swipecity_my_listings_' + uid);
+        add(raw ? JSON.parse(raw) : []);
+      } catch (e) {}
+
+      // 2) From the already-loaded feed — getActiveItems returned ALL active
+      //    listings (proven working), so the seller's own are in there. This is
+      //    the reliable source and avoids any query-rule edge case.
+      add((seededItems || []).filter(i => i.seller_id === uid));
+
+      // 3) Backend query (covers non-active too); best-effort bonus.
+      try { add(await firebaseNative.getMyItems(uid)); } catch (e) {}
+
+      const merged = [...byId.values()].sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+      if (merged.length === 0) return;
+      updateState({ userListings: merged });
+      try { localStorage.setItem('swipecity_my_listings_' + uid, JSON.stringify(merged)); } catch (e) {}
     })();
-  }, [user?.uid, loadingItems, updateState]);
+  }, [user?.uid, loadingItems, seededItems, updateState]);
 
   // Reset per-account state when the signed-in account changes (switch or
   // sign-out), so a NEW account never inherits the previous user's listings,
