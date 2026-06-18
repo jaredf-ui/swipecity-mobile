@@ -91,6 +91,13 @@ function makeFakeBackend() {
         return ok({ name, fields: data.fields });
       }
 
+      // ---- Firestore delete item (DELETE .../items/<id>) ----
+      if (m === 'DELETE' && url.includes(`${FS_BASE}/items/`)) {
+        const id = url.split('/items/')[1].split('?')[0];
+        delete collections.items[id];
+        return ok({});
+      }
+
       // ---- Firestore get user / generic GET ----
       if (m === 'GET' && url.includes(`${FS_BASE}/users/`)) {
         const uid = url.split('/users/')[1].split('?')[0];
@@ -178,6 +185,23 @@ async function hydrateMyListings({ uid, localStorage, seededItems, firebaseNativ
   if (merged.length === 0) return { merged: [], latched: false };
   localStorage.setItem('swipecity_my_listings_' + uid, JSON.stringify(merged));
   return { merged, latched: true };
+}
+
+// ---------------------------------------------------------------------------
+// EXTRACTED delete-listing logic — mirrors App.js handleDeleteListing.
+// Deletes from Firestore, removes from in-memory listings, and updates the
+// persisted per-user localStorage copy.
+// ---------------------------------------------------------------------------
+async function deleteListing({ uid, deletedId, localStorage, firebaseNative, currentUserListings = [] }) {
+  let backendOk = false;
+  try {
+    const res = await firebaseNative.deleteItem(deletedId);
+    backendOk = !!(res && res.success);
+  } catch (e) { backendOk = false; }
+
+  const updatedListings = (currentUserListings || []).filter(l => l.id !== deletedId);
+  localStorage.setItem('swipecity_my_listings_' + uid, JSON.stringify(updatedListings));
+  return { updatedListings, backendOk };
 }
 
 // ---------------------------------------------------------------------------
@@ -314,6 +338,57 @@ async function test(name, fn) {
     const r = await hydrateMyListings({ uid: 'sellerNew', localStorage: ls, seededItems: [], firebaseNative: svc, currentUserListings: [] });
     assert.strictEqual(r.merged.length, 0, 'no listings yet');
     assert.strictEqual(r.latched, false, 'must NOT latch on empty so a later pass retries');
+  });
+
+  // ===== B2) Delete persists across a force-quit relaunch =====
+  await test('deleting a listing removes it from Firestore (deleteItem)', async () => {
+    const http = makeFakeBackend();
+    const svc = loadFirebaseNative(http);
+    svc.currentUser = { uid: 'sellerA' }; svc.idToken = 'tok'; svc.refreshToken = 'r'; svc.tokenTimestamp = Date.now();
+
+    const made = await svc.createItem({ id: 'del_1', title: 'Trash', status: 'active', created_at: 1 });
+    assert.strictEqual(Object.keys(http._collections.items).length, 1, 'one item before delete');
+
+    const res = await svc.deleteItem(made.item.id);
+    assert(res.success, 'deleteItem returns success');
+    assert.strictEqual(Object.keys(http._collections.items).length, 0, 'item gone from Firestore');
+  });
+
+  await test('a deleted listing does NOT reappear after force-quit relaunch', async () => {
+    const http = makeFakeBackend(); // shared backend survives relaunch
+    const ls = makeLocalStorage();   // shared device
+
+    // SESSION 1: create + persist a listing, then delete it.
+    const svc1 = loadFirebaseNative(http);
+    svc1.currentUser = { uid: 'sellerA' }; svc1.idToken = 'tok'; svc1.refreshToken = 'r'; svc1.tokenTimestamp = Date.now();
+
+    const listing = { id: 'will_delete', title: 'Old Chair', seller_id: 'sellerA', status: 'active', created_at: 7000 };
+    const made = await svc1.createItem(listing);
+    const saved = { ...listing, ...made.item };
+    ls.setItem('swipecity_my_listings_sellerA', JSON.stringify([saved]));
+
+    // Delete it (Firestore + state + localStorage), as the App.js handler does.
+    const del = await deleteListing({
+      uid: 'sellerA', deletedId: saved.id, localStorage: ls, firebaseNative: svc1,
+      currentUserListings: [saved],
+    });
+    assert(del.backendOk, 'backend delete succeeded');
+    assert.strictEqual(del.updatedListings.length, 0, 'removed from in-memory listings');
+
+    // FORCE QUIT — React state gone; localStorage + Firestore persist.
+
+    // SESSION 2: relaunch, same account, feed reloads from Firestore.
+    const svc2 = loadFirebaseNative(http);
+    svc2.currentUser = { uid: 'sellerA' }; svc2.idToken = 'tok'; svc2.refreshToken = 'r'; svc2.tokenTimestamp = Date.now();
+    const feed = await svc2.getActiveItems(); // should NOT contain the deleted item
+
+    assert(!feed.some(i => i.id === saved.id), 'deleted item not in the buy feed after relaunch');
+
+    const r = await hydrateMyListings({
+      uid: 'sellerA', localStorage: ls, seededItems: feed, firebaseNative: svc2, currentUserListings: [],
+    });
+    assert(!r.merged.some(i => i.id === saved.id), 'deleted listing does NOT reappear in My Listings');
+    assert.strictEqual(r.merged.length, 0, 'no listings remain after delete + relaunch');
   });
 
   // ===== C) Account isolation =====

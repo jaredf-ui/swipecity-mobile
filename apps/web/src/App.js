@@ -1861,12 +1861,29 @@ const handleUpdateListing = useCallback(() => {
   alert('Listing updated successfully! 🎉');
 }, [appState.editingListing, appState.editTitle, appState.editPrice, appState.editDescription, appState.editCondition, appState.editImages, appState.userListings, updateState]);
 
-const handleDeleteListing = useCallback(() => {
+const handleDeleteListing = useCallback(async () => {
   if (window.confirm('Are you sure you want to delete this listing? This action cannot be undone.')) {
-    const updatedListings = appState.userListings.filter(listing => 
-      listing.id !== appState.editingListing.id
+    const deletedId = appState.editingListing.id;
+
+    // 1) Delete from Firestore so it doesn't reappear on relaunch. Best-effort:
+    //    if the backend write fails we still remove it locally, but surface the
+    //    error so the user knows it might come back.
+    let backendError = null;
+    try {
+      const res = await firebaseNative.deleteItem(deletedId);
+      if (!res || !res.success) backendError = res?.error || 'unknown error';
+    } catch (err) {
+      backendError = err?.message || 'unknown error';
+    }
+
+    // 2) Remove from My Listings state.
+    const updatedListings = (appState.userListings || []).filter(listing =>
+      listing.id !== deletedId
     );
-    
+
+    // 3) Remove from the buyer feed so it disappears immediately.
+    setSeededItems(prev => (prev || []).filter(i => i.id !== deletedId));
+
     updateState({
       userListings: updatedListings,
       showEditModal: false,
@@ -1877,10 +1894,23 @@ const handleDeleteListing = useCallback(() => {
       editCondition: '',
       editImages: []
     });
-    
-    alert('Listing deleted successfully');
+
+    // 4) Update the persisted per-user copy so it stays gone after relaunch.
+    if (user?.uid) {
+      try {
+        localStorage.setItem('swipecity_my_listings_' + user.uid, JSON.stringify(updatedListings));
+      } catch (e) {
+        console.warn('[storage] could not persist my listings after delete:', e?.message);
+      }
+    }
+
+    if (backendError) {
+      alert('Listing removed from your device, but the server delete failed (' + backendError + '). It may reappear after relaunch.');
+    } else {
+      alert('Listing deleted successfully');
+    }
   }
-}, [appState.editingListing, appState.userListings, updateState]);
+}, [appState.editingListing, appState.userListings, updateState, user]);
 
 // Handle seller approving buyer interest
 const handleApproveInterest = useCallback((interest) => {

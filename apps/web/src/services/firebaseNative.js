@@ -1000,6 +1000,22 @@ export class FirebaseNativeService {
     return { success: true, item: { ...data, id: this._docId(response.data.name) } };
   }
 
+  // Permanently delete an item doc. Rules allow delete when auth.uid ==
+  // resource.data.seller_id, so the signed-in seller can remove their own
+  // listing. Uses the same ensureValidToken + 401->refresh->retry pattern
+  // (via _fsRequest) as the other Firestore calls so a stale iOS session token
+  // doesn't silently fail the delete.
+  async deleteItem(itemId) {
+    if (!itemId) return { success: false, error: 'No item id' };
+    const url = `${this.firestoreUrl}/items/${itemId}?key=${this.apiKey}`;
+    const response = await this._fsRequest('DELETE', url);
+    if (!response.ok) {
+      console.error('[Firestore] deleteItem failed:', response.data?.error?.message || response.status);
+      return { success: false, error: response.data?.error?.message || 'deleteItem failed' };
+    }
+    return { success: true };
+  }
+
   async getActiveItems(limitN = 200) {
     return this.runQuery({
       from: [{ collectionId: 'items' }],
