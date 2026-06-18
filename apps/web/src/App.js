@@ -7192,44 +7192,33 @@ if (!appState.showAddItem) {
                           
                           console.log(`📝 [${platform.toUpperCase()}] Updated user bio:`, updatedUser.bio);
                           
-                          // Save to ALL localStorage keys
-                          localStorage.setItem('swipecity_demo_user', JSON.stringify(updatedUser));
-                          localStorage.setItem('swipecity_mock_user', JSON.stringify(updatedUser));
-                          localStorage.setItem('swipecity_user', JSON.stringify(updatedUser));
-                          
-                          if (updatedUser.email) {
-                            const userKey = `swipecity_user_${updatedUser.email.replace(/[@+.]/g, '_')}`;
-                            localStorage.setItem(userKey, JSON.stringify(updatedUser));
-                            console.log(`📝 [${platform.toUpperCase()}] Bio saved to user-specific key:`, userKey);
+                          // Update the displayed bio immediately (display reads
+                          // user.bio). Do this FIRST so it can't be blocked by a
+                          // storage write.
+                          setUser(() => ({ ...updatedUser }));
+                          setUserProfile(() => ({ ...updatedUser }));
+                          setGlobalUser({ ...updatedUser });
+
+                          // Persist locally, GUARDED — the old code did 4 unguarded
+                          // setItem calls; if any threw (quota) the handler aborted
+                          // before closing the editor, so "Save did nothing".
+                          try {
+                            localStorage.setItem('swipecity_native_user', JSON.stringify(updatedUser));
+                            localStorage.setItem('swipecity_user', JSON.stringify(updatedUser));
+                          } catch (e) { console.warn('[storage] bio save skipped:', e?.message); }
+
+                          // Persist to the Firestore profile via the REST layer that
+                          // works on iOS (window.firebaseServices is never assigned).
+                          if (user?.uid) {
+                            firebaseNative.updateUserProfile(user.uid, { bio: appState.tempBio })
+                              .catch(err => console.log('Bio sync failed:', err?.message));
                           }
-                          
-                          console.log(`📝 [${platform.toUpperCase()}] Bio saved to localStorage`);
-                          
-                          // Force update ALL state contexts with delay for iOS
-                          setTimeout(() => {
-                            console.log(`📝 [${platform.toUpperCase()}] Updating user contexts...`);
-                            setUser(() => ({ ...updatedUser }));
-                            setUserProfile(() => ({ ...updatedUser }));
-                            setGlobalUser(() => ({ ...updatedUser }));
-                            console.log(`📝 [${platform.toUpperCase()}] User contexts updated`);
-                          }, platform === 'ios' ? 100 : 0);
-                          
-                          // Try Firebase sync in background (will be skipped on iOS)
-                          if (window.firebaseServices?.firestore && user.uid) {
-                            console.log(`📝 [${platform.toUpperCase()}] Syncing bio to Firebase...`);
-                            window.firebaseServices.firestore.updateUserProfile(user.uid, { bio: appState.tempBio })
-                              .then(() => console.log(`📝 [${platform.toUpperCase()}] Bio synced to Firebase`))
-                              .catch(err => console.log('Firebase bio sync failed:', err));
-                          } else {
-                            console.log(`📝 [${platform.toUpperCase()}] Skipping Firebase sync (offline mode)`);
-                          }
-                          
+
                           // Close bio editor
-                          updateState({ 
-                            editingBio: false, 
-                            tempBio: '', 
-                            savedBio: appState.tempBio,
-                            onboardingStep: 1
+                          updateState({
+                            editingBio: false,
+                            tempBio: '',
+                            savedBio: appState.tempBio
                           });
                           
                           console.log(`📝 [${platform.toUpperCase()}] Bio saved and modal closed`);
