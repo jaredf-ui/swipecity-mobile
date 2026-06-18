@@ -936,27 +936,33 @@ const SwipeMarketplace = () => {
     })();
   }, [user?.uid, loadingItems, seededItems, appState.userListings, updateState]);
 
-  // Reset per-account state when the signed-in account actually CHANGES from one
-  // real account to a DIFFERENT real account (account switch), so a new account
-  // never inherits the previous user's listings/saved/chats/interests.
+  // Reset per-account state whenever the previous signed-in account was a REAL
+  // account and it differs from the current uid, so a new account never inherits
+  // the previous user's listings/saved/chats/interests.
   //
-  // Important: we only reset on a real uid -> different real uid transition. The
-  // initial null -> uid transition on a fresh launch is NOT a switch (auth is
-  // simply restoring), and clearing there used to race the hydration effect and
-  // could wipe the just-hydrated My Listings. A uid -> null transition is a
-  // sign-out and is handled by AuthContext clearing storage; we still re-arm the
-  // hydration latch so the next sign-in re-hydrates.
+  // This fires on BOTH legs of an account switch performed via sign-out:
+  //   - sign-out      (seller1 -> null): prev=seller1, uid=null  -> CLEAR+re-arm
+  //   - next sign-in  (null  -> buyer1): prev=null,    uid=buyer1 -> no-op
+  // Clearing on the sign-out leg is what fixes the leak: the previous code only
+  // cleared on a DIRECT real-uid -> real-uid transition and skipped anything
+  // touching null. Because sign-out then sign-in goes seller1 -> null -> buyer1,
+  // NEITHER leg cleared, so buyer1 inherited seller1's in-memory listings and
+  // re-persisted them under buyer1's key. Clearing on seller1 -> null means the
+  // subsequent null -> buyer1 hydration starts from an empty slate and loads
+  // only buyer1's own data.
+  //
+  // Important: a fresh cold launch is undefined/null -> uid (prev is undefined or
+  // null), so `prev` is falsy and we DON'T clear — avoiding the earlier race
+  // where a clear wiped the just-hydrated My Listings. We still always re-arm
+  // the hydration latches on the new uid via the effects below.
   const prevUidRef = React.useRef(undefined);
   useEffect(() => {
     const uid = user?.uid || null;
-    const prev = prevUidRef.current;
-    if (prev !== undefined && prev !== null && uid !== null && prev !== uid) {
-      // Real account switch: clear the previous account's in-memory state.
+    if (prevUidRef.current && prevUidRef.current !== uid) {
+      // Previous real account left (sign-out or direct switch): clear its
+      // in-memory state and re-arm the hydration latches so the next account
+      // (or re-sign-in) hydrates fresh from its own sources.
       updateState({ userListings: [], savedItems: [], chats: [], buyerInterests: [] });
-      savedItemsHydrated.current = false;
-      myListingsHydratedUid.current = null;
-    } else if (prev && uid === null) {
-      // Sign-out: re-arm latches so a later sign-in hydrates fresh.
       savedItemsHydrated.current = false;
       myListingsHydratedUid.current = null;
     }

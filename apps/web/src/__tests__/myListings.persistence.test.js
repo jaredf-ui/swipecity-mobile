@@ -188,6 +188,53 @@ async function hydrateMyListings({ uid, localStorage, seededItems, firebaseNativ
 }
 
 // ---------------------------------------------------------------------------
+// EXTRACTED account-isolation reset condition — mirrors the prevUidRef effect
+// in App.js. Returns true when the previous account's in-memory state must be
+// CLEARED and the hydration latches re-armed. The rule: clear whenever the
+// previous uid was a REAL account and it differs from the current uid. This
+// fires on the sign-out leg (seller1 -> null) AND on a direct switch
+// (seller1 -> buyer1), but NOT on a cold launch (undefined/null -> uid).
+// ---------------------------------------------------------------------------
+function shouldResetOnUidChange(prevUid, nextUid) {
+  return !!(prevUid && prevUid !== nextUid);
+}
+
+// In-memory model of the App's per-account React state + hydration latches,
+// driven through uid transitions exactly like App.js does, so a test can assert
+// what "My Listings" (userListings) holds after sign-out -> sign-in.
+function makeAppStateMachine() {
+  return {
+    prevUid: undefined,
+    userListings: [], savedItems: [], chats: [], buyerInterests: [],
+    savedItemsHydrated: false,
+    myListingsHydratedUid: null,
+    // Apply a uid transition (sign-in/out/switch), running the reset effect.
+    setUid(nextUid) {
+      const uid = nextUid || null;
+      if (shouldResetOnUidChange(this.prevUid, uid)) {
+        this.userListings = []; this.savedItems = []; this.chats = []; this.buyerInterests = [];
+        this.savedItemsHydrated = false;
+        this.myListingsHydratedUid = null;
+      }
+      this.prevUid = uid;
+    },
+    // Run the My-Listings hydration for the current account (uid-guarded).
+    async hydrate({ uid, localStorage, seededItems, firebaseNative }) {
+      if (!uid) return;
+      if (this.myListingsHydratedUid === uid) return;
+      const r = await hydrateMyListings({
+        uid, localStorage, seededItems, firebaseNative,
+        currentUserListings: this.userListings,
+      });
+      if (r.latched) {
+        this.myListingsHydratedUid = uid;
+        this.userListings = r.merged;
+      }
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // EXTRACTED delete-listing logic — mirrors App.js handleDeleteListing.
 // Deletes from Firestore, removes from in-memory listings, and updates the
 // persisted per-user localStorage copy.
@@ -424,6 +471,64 @@ async function test(name, fn) {
     // And B's getMyItems returns nothing of A's.
     const bItems = await svcB.getMyItems('sellerB');
     assert.strictEqual(bItems.length, 0, 'getMyItems(B) is empty');
+  });
+
+  // The exact bug repro: sign OUT of account A, sign IN as account B (with no
+  // listings). B's My Listings must be EMPTY and contain NONE of A's items.
+  // Then sign back into A and confirm A's listing still shows (no over-clear).
+  await test('sign-out(A)->sign-in(B): B sees none of A; signing back into A still shows A', async () => {
+    const http = makeFakeBackend();
+    const ls = makeLocalStorage(); // one device, two accounts
+
+    // ----- SESSION as account A: create + persist a listing, hydrate -----
+    const svcA = loadFirebaseNative(http);
+    svcA.currentUser = { uid: 'sellerA' }; svcA.idToken = 'tok'; svcA.refreshToken = 'r'; svcA.tokenTimestamp = Date.now();
+    const made = await svcA.createItem({ id: 'A_only', title: 'A Sofa', seller_id: 'sellerA', status: 'active', created_at: 100 });
+    const aItemId = made.item.id;
+    ls.setItem('swipecity_my_listings_sellerA', JSON.stringify([made.item]));
+
+    const app = makeAppStateMachine();
+    app.setUid('sellerA');                       // initial sign-in (cold) -> no reset
+    await app.hydrate({ uid: 'sellerA', localStorage: ls, seededItems: await svcA.getActiveItems(), firebaseNative: svcA });
+    assert.strictEqual(app.userListings.length, 1, 'A has its listing in My Listings');
+    assert.strictEqual(app.userListings[0].id, aItemId);
+
+    // ----- SIGN OUT (sellerA -> null): this MUST clear A's in-memory state -----
+    app.setUid(null);
+    assert.strictEqual(app.userListings.length, 0, 'sign-out clears in-memory My Listings');
+    assert.strictEqual(app.myListingsHydratedUid, null, 'hydration latch re-armed on sign-out');
+
+    // ----- SIGN IN as account B (null -> sellerB), B has listed nothing -----
+    const svcB = loadFirebaseNative(http);
+    svcB.currentUser = { uid: 'sellerB' }; svcB.idToken = 'tok'; svcB.refreshToken = 'r'; svcB.tokenTimestamp = Date.now();
+    app.setUid('sellerB');                        // null -> B: no clear needed, already empty
+    const bFeed = await svcB.getActiveItems();    // B's feed CAN see A's active item
+    assert(bFeed.some(i => i.id === aItemId), 'B can see A item in the buy feed (expected)');
+    await app.hydrate({ uid: 'sellerB', localStorage: ls, seededItems: bFeed, firebaseNative: svcB });
+
+    assert.strictEqual(app.userListings.length, 0, "B's My Listings is EMPTY");
+    assert(!app.userListings.some(i => i.id === aItemId), "B's My Listings contains NONE of A's items");
+    // And B did not inherit A's localStorage copy under B's key.
+    assert(!ls.getItem('swipecity_my_listings_sellerB'), 'no B-keyed listings were written');
+
+    // ----- SIGN BACK INTO A (sellerB -> sellerA): A's listing must reappear -----
+    app.setUid('sellerA');                        // B -> A: clears (B had nothing), re-arms latch
+    const svcA2 = loadFirebaseNative(http);
+    svcA2.currentUser = { uid: 'sellerA' }; svcA2.idToken = 'tok'; svcA2.refreshToken = 'r'; svcA2.tokenTimestamp = Date.now();
+    await app.hydrate({ uid: 'sellerA', localStorage: ls, seededItems: await svcA2.getActiveItems(), firebaseNative: svcA2 });
+    assert.strictEqual(app.userListings.length, 1, 'A still has its listing (fix did not over-clear)');
+    assert.strictEqual(app.userListings[0].id, aItemId, 'it is A’s original listing');
+  });
+
+  await test('shouldResetOnUidChange: clears on real-account leave, not on cold launch', () => {
+    // Cold launch legs: no clear.
+    assert.strictEqual(shouldResetOnUidChange(undefined, 'u1'), false, 'undefined -> uid (cold) does not clear');
+    assert.strictEqual(shouldResetOnUidChange(null, 'u1'), false, 'null -> uid (restore) does not clear');
+    // Real account leaving: clear.
+    assert.strictEqual(shouldResetOnUidChange('u1', null), true, 'sign-out (uid -> null) clears');
+    assert.strictEqual(shouldResetOnUidChange('u1', 'u2'), true, 'direct switch (uid -> uid) clears');
+    // No-op same uid.
+    assert.strictEqual(shouldResetOnUidChange('u1', 'u1'), false, 'same uid does not clear');
   });
 
   console.log(`\n${passed} passed, ${failed} failed`);
