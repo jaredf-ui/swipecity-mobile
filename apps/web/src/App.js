@@ -880,53 +880,85 @@ const SwipeMarketplace = () => {
     }
   }, [userProfile?.savedItems, updateState]);
 
-  // Hydrate the seller's own listings from localStorage so they survive relaunch
-  // and reappear in both "My Listings" and the buyer feed. Runs once, after auth
-  // (uid known) and the feed has finished loading (so it merges on top of the
-  // loaded feed rather than being overwritten by it).
-  const myListingsHydrated = React.useRef(false);
+  // Hydrate the seller's own listings so they survive a force-quit relaunch and
+  // reappear in both "My Listings" and the buyer feed.
+  //
+  // Resilience notes (this is what fixes the "My Listings empty after relaunch"
+  // bug):
+  //  - The latch is set to the SIGNED-IN UID *only after* we actually obtain a
+  //    non-empty merged result. The old code latched a boolean `true`
+  //    synchronously *before* the async merge, so if every source happened to
+  //    return empty on a cold launch (a stale-token race: the restored ID token
+  //    is being refreshed concurrently by AuthContext's getUserProfile, so the
+  //    feed's getActiveItems and getMyItems can both transiently 401/empty), the
+  //    hydration latched permanently and never retried — leaving My Listings
+  //    empty for the whole session even though the listing exists in Firestore.
+  //    Keying the latch off the uid (not a bool) and only latching on success
+  //    lets the effect re-run when `seededItems` later updates (e.g. after the
+  //    token refreshes and the feed reloads) and finally find the listing.
+  //  - We always merge over the CURRENT userListings, so a late-arriving source
+  //    never drops items the user already saw this session.
+  const myListingsHydratedUid = React.useRef(null);
   useEffect(() => {
-    if (myListingsHydrated.current) return;
-    if (!user?.uid || loadingItems) return;
-    myListingsHydrated.current = true;
-    const uid = user.uid;
+    const uid = user?.uid;
+    if (!uid || loadingItems) return;
+    if (myListingsHydratedUid.current === uid) return; // already hydrated this account
     (async () => {
       const byId = new Map();
       const add = (arr) => (arr || []).forEach(i => { if (i && i.id) byId.set(i.id, i); });
 
-      // 1) Local copy (fast / offline).
+      // 0) Anything already in state this session (never lose what's shown).
+      add(appState.userListings);
+
+      // 1) Local copy (fast / offline / survives a backend outage).
       try {
         const raw = localStorage.getItem('swipecity_my_listings_' + uid);
         add(raw ? JSON.parse(raw) : []);
       } catch (e) {}
 
       // 2) From the already-loaded feed — getActiveItems returned ALL active
-      //    listings (proven working), so the seller's own are in there. This is
-      //    the reliable source and avoids any query-rule edge case.
+      //    listings (proven working), so the seller's own active ones are in
+      //    there. Reliable and avoids any query-rule edge case.
       add((seededItems || []).filter(i => i.seller_id === uid));
 
-      // 3) Backend query (covers non-active too); best-effort bonus.
+      // 3) Backend query (covers sold/non-active too, and recovers when the feed
+      //    load missed the listing); best-effort.
       try { add(await firebaseNative.getMyItems(uid)); } catch (e) {}
 
       const merged = [...byId.values()].sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+      // Only LATCH on a real result. If everything was empty this pass (token
+      // race / offline), leave the latch un-set so a later seededItems update or
+      // the next effect run retries instead of permanently giving up.
       if (merged.length === 0) return;
+      myListingsHydratedUid.current = uid;
       updateState({ userListings: merged });
       try { localStorage.setItem('swipecity_my_listings_' + uid, JSON.stringify(merged)); } catch (e) {}
     })();
-  }, [user?.uid, loadingItems, seededItems, updateState]);
+  }, [user?.uid, loadingItems, seededItems, appState.userListings, updateState]);
 
-  // Reset per-account state when the signed-in account changes (switch or
-  // sign-out), so a NEW account never inherits the previous user's listings,
-  // saved items, chats, or interests (those are React state that otherwise
-  // persists across a sign-out/sign-in). Re-arm the hydration guards so the new
-  // account loads ITS own data.
+  // Reset per-account state when the signed-in account actually CHANGES from one
+  // real account to a DIFFERENT real account (account switch), so a new account
+  // never inherits the previous user's listings/saved/chats/interests.
+  //
+  // Important: we only reset on a real uid -> different real uid transition. The
+  // initial null -> uid transition on a fresh launch is NOT a switch (auth is
+  // simply restoring), and clearing there used to race the hydration effect and
+  // could wipe the just-hydrated My Listings. A uid -> null transition is a
+  // sign-out and is handled by AuthContext clearing storage; we still re-arm the
+  // hydration latch so the next sign-in re-hydrates.
   const prevUidRef = React.useRef(undefined);
   useEffect(() => {
     const uid = user?.uid || null;
-    if (prevUidRef.current !== undefined && prevUidRef.current !== uid) {
+    const prev = prevUidRef.current;
+    if (prev !== undefined && prev !== null && uid !== null && prev !== uid) {
+      // Real account switch: clear the previous account's in-memory state.
       updateState({ userListings: [], savedItems: [], chats: [], buyerInterests: [] });
       savedItemsHydrated.current = false;
-      myListingsHydrated.current = false;
+      myListingsHydratedUid.current = null;
+    } else if (prev && uid === null) {
+      // Sign-out: re-arm latches so a later sign-in hydrates fresh.
+      savedItemsHydrated.current = false;
+      myListingsHydratedUid.current = null;
     }
     prevUidRef.current = uid;
   }, [user?.uid, updateState]);
