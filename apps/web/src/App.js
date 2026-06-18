@@ -1,6 +1,7 @@
 import React, { useState, useEffect, createContext, useContext, useCallback, useMemo, Component } from 'react';
 import { MessageCircle, User, LogOut, Camera } from 'lucide-react';
 import { Camera as CapacitorCamera, CameraResultType, CameraSource, CameraDirection } from '@capacitor/camera';
+import firebaseNative from './services/firebaseNative';
 import AdminDashboard from './components/AdminDashboard';
 import SkeletonCard from './components/SkeletonCard';
 import { SwipeFeedback, LoadingSpinner, MatchSuccessAnimation } from './components/SwipeFeedback';
@@ -5491,9 +5492,32 @@ if (!appState.showAddItem) {
                 return;
               }
 
+              const listingId = 'listing_' + Date.now();
+              const sellerId = user?.uid || user?.id || 'user123';
+
+              // Upload each photo to Firebase Storage and keep only the (tiny)
+              // download URL. Storing base64 photos in the listing bloats
+              // localStorage/Firestore past their limits, so listings silently
+              // failed to persist. Falls back to the data URL if an upload fails
+              // (so the photo still shows this session).
+              updateState({ loading: true });
+              const uploadedImages = [];
+              for (let i = 0; i < appState.selectedImages.length; i++) {
+                const img = appState.selectedImages[i];
+                let finalUrl = img.url;
+                try {
+                  const res = await firebaseNative.uploadDataUrl(`item-photos/${listingId}/${i}_${Date.now()}.jpg`, img.url);
+                  if (res && res.success && res.url) finalUrl = res.url;
+                } catch (e) {
+                  console.warn('Listing photo upload failed; keeping local image:', e?.message);
+                }
+                uploadedImages.push({ url: finalUrl, name: img.name });
+              }
+              updateState({ loading: false });
+
               // Create new listing object
               const newListing = {
-                id: 'listing_' + Date.now(),
+                id: listingId,
                 title: SecurityUtils.sanitizeInputFinal(appState.newItemTitle),
                 price: appState.newItemPrice,
                 condition: appState.newItemCondition,
@@ -5501,11 +5525,11 @@ if (!appState.showAddItem) {
                 // also set `location` since the feed filter checks city||location
                 location: SecurityUtils.sanitizeInputFinal(appState.newItemCity),
                 description: SecurityUtils.sanitizeInputFinal(appState.newItemDescription),
-                images: appState.selectedImages,
+                images: uploadedImages,
                 // The feed/saved cards render item.image_url; set it to the first
                 // photo so listings actually show their image (not just `images[]`).
-                image_url: (appState.selectedImages[0] && appState.selectedImages[0].url) || '',
-                seller_id: user?.uid || user?.id || 'user123',
+                image_url: (uploadedImages[0] && uploadedImages[0].url) || '',
+                seller_id: sellerId,
                 seller_name: user?.displayName || user?.username || 'You',
                 created_at: Date.now(),
                 status: 'active'
