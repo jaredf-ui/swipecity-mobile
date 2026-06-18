@@ -33,6 +33,41 @@ const safeParseLocal = (key, fallback = {}) => {
   }
 };
 
+// Downscale a (potentially huge, full-resolution) image data URL to a bounded
+// JPEG via canvas. Library photos come in at full size, which bloats listings
+// past Firestore's ~1MB doc limit (so saved/listed items silently fail to
+// persist). The camera plugin already downscales; this brings library photos in
+// line. Falls back to the original on any error.
+const downscaleDataUrl = (dataUrl, maxDim = 1200, quality = 0.7) => new Promise((resolve) => {
+  try {
+    if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image')) {
+      resolve(dataUrl);
+      return;
+    }
+    const img = new Image();
+    img.onload = () => {
+      try {
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          if (width >= height) { height = Math.round((height * maxDim) / width); width = maxDim; }
+          else { width = Math.round((width * maxDim) / height); height = maxDim; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      } catch {
+        resolve(dataUrl);
+      }
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  } catch {
+    resolve(dataUrl);
+  }
+});
+
 // Inline shared data for Capacitor compatibility
 const mockItems = [
   {
@@ -335,6 +370,7 @@ const SwipeMarketplace = () => {
       deleteAccount,
       reauthenticate,
       saveItem: saveItemToProfile,
+      removeSavedItem: removeSavedItemFromProfile,
       likeItem: likeItemToProfile,
       savePreferences,
       setUser,
@@ -824,13 +860,19 @@ const SwipeMarketplace = () => {
   // Loop-safe: once appState.savedItems is populated the condition is false.
   // NOTE: must be declared AFTER appState/updateState — referencing them in the
   // deps array before their declaration throws a temporal-dead-zone error.
+  // Run ONCE (ref-guarded). The earlier version re-hydrated whenever savedItems
+  // hit empty, which made removing your last saved item re-appear ("remove does
+  // nothing"). Removal is now persisted via removeSavedItem, so hydrate only the
+  // first time the profile reports saved items.
+  const savedItemsHydrated = React.useRef(false);
   useEffect(() => {
+    if (savedItemsHydrated.current) return;
     const profileSaved = userProfile?.savedItems;
-    if (Array.isArray(profileSaved) && profileSaved.length > 0 &&
-        (!appState.savedItems || appState.savedItems.length === 0)) {
+    if (Array.isArray(profileSaved) && profileSaved.length > 0) {
+      savedItemsHydrated.current = true;
       updateState({ savedItems: profileSaved });
     }
-  }, [userProfile?.savedItems, appState.savedItems, updateState]);
+  }, [userProfile?.savedItems, updateState]);
 
   // Hydrate the seller's own listings from localStorage so they survive relaunch
   // and reappear in both "My Listings" and the buyer feed. Runs once, after auth
@@ -1318,12 +1360,15 @@ const addListingPhotos = useCallback(async (fileList, source = 'camera') => {
         alert('Please provide an answer to continue posting.');
         return;
       }
-      const dataUrl = await new Promise((resolve, reject) => {
+      const rawDataUrl = await new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = (event) => resolve(event.target.result);
         reader.onerror = reject;
         reader.readAsDataURL(file);
       });
+      // Downscale library photos (camera photos already arrive downscaled) so
+      // listings/saved items stay small enough to persist.
+      const dataUrl = await downscaleDataUrl(rawDataUrl, 1200, 0.7);
       newImages.push({
         file,
         url: dataUrl,
@@ -5457,6 +5502,9 @@ if (!appState.showAddItem) {
                 location: SecurityUtils.sanitizeInputFinal(appState.newItemCity),
                 description: SecurityUtils.sanitizeInputFinal(appState.newItemDescription),
                 images: appState.selectedImages,
+                // The feed/saved cards render item.image_url; set it to the first
+                // photo so listings actually show their image (not just `images[]`).
+                image_url: (appState.selectedImages[0] && appState.selectedImages[0].url) || '',
                 seller_id: user?.uid || user?.id || 'user123',
                 seller_name: user?.displayName || user?.username || 'You',
                 created_at: Date.now(),
@@ -7734,7 +7782,10 @@ if (!appState.showAddItem) {
                             e.stopPropagation();
                             // Use proper interest flow instead of bypassing seller approval
                             handleExpressInterest(item);
-                            updateState({ showSavedItems: false });
+                            // Expressing interest moves the item out of Saved.
+                            const remaining = appState.savedItems.filter(i => i.id !== item.id);
+                            updateState({ savedItems: remaining, showSavedItems: false });
+                            if (removeSavedItemFromProfile) removeSavedItemFromProfile(item.id);
                           }}
                           style={{
                             background: '#667eea',
@@ -7754,6 +7805,8 @@ if (!appState.showAddItem) {
                             e.stopPropagation();
                             const newSavedItems = appState.savedItems.filter(i => i.id !== item.id);
                             updateState({ savedItems: newSavedItems });
+                            // Persist the removal so it doesn't reappear on relaunch.
+                            if (removeSavedItemFromProfile) removeSavedItemFromProfile(item.id);
                           }}
                           style={{
                             background: '#ff4444',

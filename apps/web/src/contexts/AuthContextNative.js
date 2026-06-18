@@ -478,7 +478,25 @@ export const AuthProvider = ({ children }) => {
       safeSetLocal('swipecity_native_user', JSON.stringify(updatedProfile));
       setUserProfile(updatedProfile);
     }
-    
+
+    return { success: true };
+  };
+
+  // Remove a saved item and persist the removal (Firebase + localStorage), so it
+  // stays removed across relaunch instead of being re-hydrated from the profile.
+  const removeSavedItem = async (itemId) => {
+    if (!user) {
+      return { success: false, error: 'No user logged in' };
+    }
+    const updatedSavedItems = (userProfile?.savedItems || []).filter(i => i.id !== itemId);
+    const updatedProfile = { ...userProfile, savedItems: updatedSavedItems };
+    try {
+      await firebaseNative.updateUserProfile(user.uid, { savedItems: updatedSavedItems });
+    } catch (error) {
+      // best-effort; local state below still reflects the removal
+    }
+    safeSetLocal('swipecity_native_user', JSON.stringify(updatedProfile));
+    setUserProfile(updatedProfile);
     return { success: true };
   };
 
@@ -598,6 +616,7 @@ export const AuthProvider = ({ children }) => {
     reauthenticate,
     savePreferences,
     saveItem,
+    removeSavedItem,
     likeItem,
     setUser,
     setUserProfile,
