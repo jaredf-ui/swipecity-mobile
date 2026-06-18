@@ -6892,7 +6892,7 @@ if (!appState.showAddItem) {
           overflowY: 'auto',
           WebkitOverflowScrolling: 'touch'
         }}>
-          <div style={{ padding: '20px', paddingBottom: 'max(20px, env(safe-area-inset-bottom) + 20px)' }}>
+          <div style={{ padding: '20px', paddingBottom: 'max(90px, env(safe-area-inset-bottom) + 90px)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
               <h3 style={{ margin: 0 }}>Profile</h3>
               <CloseButton 
