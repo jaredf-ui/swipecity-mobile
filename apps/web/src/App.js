@@ -889,18 +889,30 @@ const SwipeMarketplace = () => {
     if (myListingsHydrated.current) return;
     if (!user?.uid || loadingItems) return;
     myListingsHydrated.current = true;
-    let mine = [];
-    try {
-      const raw = localStorage.getItem('swipecity_my_listings_' + user.uid);
-      mine = raw ? JSON.parse(raw) : [];
-    } catch { mine = []; }
-    if (!Array.isArray(mine) || mine.length === 0) return;
-    updateState({ userListings: mine });
-    setSeededItems(prev => {
-      const ids = new Set((prev || []).map(i => i.id));
-      const fresh = mine.filter(m => m && !ids.has(m.id));
-      return fresh.length ? [...fresh, ...(prev || [])] : (prev || []);
-    });
+    (async () => {
+      // Local copy first (fast / offline fallback).
+      let mine = [];
+      try {
+        const raw = localStorage.getItem('swipecity_my_listings_' + user.uid);
+        mine = raw ? JSON.parse(raw) : [];
+      } catch { mine = []; }
+      // Authoritative: the seller's own listings from Firestore, so "My Listings"
+      // works cross-device / after a fresh sign-in (not just from this device's
+      // localStorage). Merge, deduped by id.
+      try {
+        const remote = await firebaseNative.getMyItems(user.uid);
+        if (Array.isArray(remote) && remote.length > 0) {
+          const ids = new Set(mine.map(m => m.id));
+          mine = [...mine, ...remote.filter(r => r && r.id && !ids.has(r.id))];
+        }
+      } catch (e) {
+        console.warn('getMyItems skipped:', e?.message);
+      }
+      if (!Array.isArray(mine) || mine.length === 0) return;
+      updateState({ userListings: mine });
+      // Also persist the merged set locally for fast offline reload.
+      try { localStorage.setItem('swipecity_my_listings_' + user.uid, JSON.stringify(mine)); } catch (e) {}
+    })();
   }, [user?.uid, loadingItems, updateState]);
 
   // Reset per-account state when the signed-in account changes (switch or
