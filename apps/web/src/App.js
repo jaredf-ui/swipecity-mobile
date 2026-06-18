@@ -3298,7 +3298,7 @@ if (!appState.showAddItem) {
                               return sellerBios[currentItem.seller_name] || `${currentItem.seller_name} is a trusted seller on SwipeCity with ${currentItem.seller_reviews} reviews and a ${currentItem.seller_rating} star rating.`;
                             })();
                             
-                            alert(`📝 Seller Profile\n\n👤 ${currentItem.seller_name}\n⭐ ${currentItem.seller_rating} rating (${currentItem.seller_reviews} reviews)\n📍 ${currentItem.city || currentItem.location || 'Location not specified'}\n${currentItem.verified ? '✅ Verified Seller' : '⚠️ Unverified'}\n\n${sellerBio}`);
+                            alert(`📝 Seller Profile\n\n👤 ${currentItem.seller_name}\n⭐ ${currentItem.seller_rating} rating (${currentItem.seller_reviews} reviews)\n📍 ${currentItem.city || currentItem.location || 'Location not specified'}${currentItem.verified ? '\n✅ Verified Seller' : ''}\n\n${sellerBio}`);
                           }}
                           style={{ 
                             fontWeight: '600', 
@@ -3310,17 +3310,21 @@ if (!appState.showAddItem) {
                       </p>
                     </div>
                     <div style={{ textAlign: 'right' }}>
-                      <div style={{
-                        background: currentItem.verified ? '#4CAF50' : '#ff9800',
-                        color: 'white',
-                        padding: '4px 8px',
-                        borderRadius: '8px',
-                        fontSize: '12px',
-                        fontWeight: 'bold',
-                        marginBottom: '5px'
-                      }}>
-                        {currentItem.verified ? '✓ Verified' : 'Unverified'}
-                      </div>
+                      {/* Only show a badge for verified sellers; hide the
+                          "Unverified" badge until a real verification flow exists. */}
+                      {currentItem.verified && (
+                        <div style={{
+                          background: '#4CAF50',
+                          color: 'white',
+                          padding: '4px 8px',
+                          borderRadius: '8px',
+                          fontSize: '12px',
+                          fontWeight: 'bold',
+                          marginBottom: '5px'
+                        }}>
+                          ✓ Verified
+                        </div>
+                      )}
                       <div style={{ fontSize: '14px', color: '#666' }}>⭐ {currentItem.seller_rating} ({currentItem.seller_reviews})</div>
                     </div>
                   </div>
