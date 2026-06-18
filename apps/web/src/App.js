@@ -2415,17 +2415,28 @@ if (!appState.showAddItem) {
         
         // Get items from DataService (will return mock items if no seeded data exists)
         const items = await DataService.getItems({ limit: 300 });
-        
-        const loadTime = performance.now() - startTime;
-        console.log(`📦 Loaded ${items.length} items in ${loadTime.toFixed(2)}ms`);
-        console.log(`⚡ Average: ${(loadTime / items.length).toFixed(2)}ms per item`);
-        
-        // Performance warning if slow
-        if (loadTime > 1000) {
-          console.warn('⚠️ Slow load detected! Consider implementing pagination.');
+
+        // Cross-device: also pull active listings posted by ANY user from
+        // Firestore (REST, works on iOS) so a seller's listing shows up in other
+        // users' feeds. Merge with the local/mock items, deduped by id; newest
+        // first. Best-effort — falls back silently if the backend/rules aren't
+        // reachable (so single-device still works).
+        let merged = items || [];
+        try {
+          const remote = await firebaseNative.getActiveItems(300);
+          if (Array.isArray(remote) && remote.length > 0) {
+            const seen = new Set(merged.map(i => i.id));
+            const fresh = remote.filter(r => r && r.id && !seen.has(r.id));
+            merged = [...fresh, ...merged].sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+          }
+        } catch (e) {
+          console.warn('Remote feed load skipped:', e?.message);
         }
-        
-        setSeededItems(items || []);
+
+        const loadTime = performance.now() - startTime;
+        console.log(`📦 Loaded ${merged.length} items in ${loadTime.toFixed(2)}ms`);
+
+        setSeededItems(merged);
       } catch (error) {
         console.error('Failed to load seeded items:', error);
         setSeededItems([]); // Fallback to empty array
@@ -5551,16 +5562,20 @@ if (!appState.showAddItem) {
                 status: 'active'
               };
 
-              // Persist the listing so it survives relaunch and reaches the buyer
-              // feed. DataService.createItem writes to Firebase when available on
-              // this platform, otherwise to localStorage (so it still persists and
-              // is re-loaded into the feed on next launch). Previously this handler
-              // only touched in-memory state, so listings vanished and no buyer
-              // ever saw them.
+              // Persist to the shared Firestore items collection (REST, works on
+              // iOS) so the listing reaches EVERY user's feed cross-device, not
+              // just this device. Photos are already Storage URLs (small). Falls
+              // back to the local object if the write fails, so the listing still
+              // shows + persists locally.
               let savedListing = newListing;
               try {
-                const saved = await DataService.createItem(newListing);
-                if (saved) savedListing = { ...newListing, ...saved };
+                const res = await firebaseNative.createItem(newListing);
+                if (res && res.success && res.item) {
+                  savedListing = { ...newListing, ...res.item };
+                } else {
+                  // Backend unavailable (e.g. rules not deployed) — keep a local copy.
+                  await DataService.createItem(newListing).catch(() => {});
+                }
               } catch (err) {
                 console.warn('createItem failed; keeping listing locally:', err?.message);
               }
