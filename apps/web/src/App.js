@@ -785,6 +785,11 @@ const SwipeMarketplace = () => {
     // Use seeded items if available, otherwise fall back to mockItems
     let sourceItems = seededItems.length > 0 ? seededItems : mockItems;
 
+    // Don't show the user their OWN listings in the buy feed.
+    if (user?.uid) {
+      sourceItems = sourceItems.filter(item => item.seller_id !== user.uid);
+    }
+
     // City filter: only show listings in the cities the buyer chose. An empty
     // selection means "all cities" so the feed is never accidentally empty.
     // Listings carry their city as either `city` (seller-posted) or `location`
@@ -897,6 +902,22 @@ const SwipeMarketplace = () => {
       return fresh.length ? [...fresh, ...(prev || [])] : (prev || []);
     });
   }, [user?.uid, loadingItems, updateState]);
+
+  // Reset per-account state when the signed-in account changes (switch or
+  // sign-out), so a NEW account never inherits the previous user's listings,
+  // saved items, chats, or interests (those are React state that otherwise
+  // persists across a sign-out/sign-in). Re-arm the hydration guards so the new
+  // account loads ITS own data.
+  const prevUidRef = React.useRef(undefined);
+  useEffect(() => {
+    const uid = user?.uid || null;
+    if (prevUidRef.current !== undefined && prevUidRef.current !== uid) {
+      updateState({ userListings: [], savedItems: [], chats: [], buyerInterests: [] });
+      savedItemsHydrated.current = false;
+      myListingsHydrated.current = false;
+    }
+    prevUidRef.current = uid;
+  }, [user?.uid, updateState]);
 
   // Helper function to open a chat with fresh data from Firebase/localStorage
   const openChat = useCallback(async (chat) => {
