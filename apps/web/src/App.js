@@ -1140,17 +1140,25 @@ const SwipeMarketplace = () => {
   const isChatUnread = (chat) => !!chat && chat.id !== activeChatId &&
     !!chat.last_sender_id && chat.last_sender_id !== myUid &&
     (chat.last_message_at || 0) > (chatSeen[chat.id] || 0);
-  const unreadChatCount = (appState.chats || []).filter(isChatUnread).length;
-  // Buyer: an accepted interest whose chat I haven't opened yet is news too.
-  const newAcceptedCount = appState.currentMode === 'buyer'
-    ? (appState.myInterests || []).filter(i => i.status === 'accepted' &&
-        !chatSeen[firebaseNative.chatIdFor(myUid, i.sellerId, i.itemId)]).length
-    : 0;
+  // Badge = chats with news: unread messages, plus (buyer) accepted interests
+  // whose chat I haven't opened yet. Counted per chat so one isn't counted twice.
+  const newsChatIds = new Set((appState.chats || []).filter(isChatUnread).map(c => c.id));
+  if (appState.currentMode === 'buyer') {
+    (appState.myInterests || []).forEach(i => {
+      const id = firebaseNative.chatIdFor(myUid, i.sellerId, i.itemId);
+      if (i.status === 'accepted' && !chatSeen[id] && id !== activeChatId) newsChatIds.add(id);
+    });
+  }
+  const unreadChatCount = newsChatIds.size;
   const pendingIncomingCount = (appState.buyerInterests || [])
     .filter(i => i.remote && i.status === 'pending').length;
 
   const renderMyInterests = () => {
-    if (appState.currentMode !== 'buyer' || !appState.myInterests?.length) return null;
+    if (appState.currentMode !== 'buyer') return null;
+    const chatIds = new Set((appState.chats || []).map(c => c.id));
+    const visible = (appState.myInterests || []).filter(i =>
+      !(i.status === 'accepted' && chatIds.has(firebaseNative.chatIdFor(myUid, i.sellerId, i.itemId))));
+    if (visible.length === 0) return null;
     const statusLabel = {
       pending: { text: 'Waiting for seller', color: '#ff9800' },
       accepted: { text: 'Accepted · tap to chat', color: '#4CAF50' },
@@ -1162,7 +1170,7 @@ const SwipeMarketplace = () => {
           Your interests
         </div>
         <div style={{ maxHeight: '230px', overflow: 'auto' }}>
-          {appState.myInterests.map(i => {
+          {visible.map(i => {
             const st = statusLabel[i.status] || statusLabel.pending;
             const chatId = firebaseNative.chatIdFor(myUid, i.sellerId, i.itemId);
             const chat = (appState.chats || []).find(c => c.id === chatId);
@@ -2725,7 +2733,9 @@ if (!appState.showAddItem) {
     };
 
     loadSeededItems();
-  }, []);
+  // Reload when the signed-in account changes: real listings need auth to read,
+  // so a load that ran before sign-in only had the samples.
+  }, [user?.uid]);
 
   // Make test function available globally for debugging
   useEffect(() => {
@@ -3596,7 +3606,7 @@ if (!appState.showAddItem) {
                               return sellerBios[currentItem.seller_name] || `${currentItem.seller_name} is a trusted seller on SwipeCity with ${currentItem.seller_reviews} reviews and a ${currentItem.seller_rating} star rating.`;
                             })();
                             
-                            alert(`📝 Seller Profile\n\n👤 ${currentItem.seller_name}\n⭐ ${currentItem.seller_rating} rating (${currentItem.seller_reviews} reviews)\n📍 ${currentItem.city || currentItem.location || 'Location not specified'}${currentItem.verified ? '\n✅ Verified Seller' : ''}\n\n${sellerBio}`);
+                            alert(`📝 Seller Profile\n\n👤 ${currentItem.seller_name}\n${currentItem.seller_rating != null ? `⭐ ${currentItem.seller_rating} rating (${currentItem.seller_reviews || 0} reviews)\n` : ''}📍 ${currentItem.city || currentItem.location || 'Location not specified'}${currentItem.verified ? '\n✅ Verified Seller' : ''}\n\n${sellerBio}`);
                           }}
                           style={{ 
                             fontWeight: '600', 
@@ -3623,7 +3633,9 @@ if (!appState.showAddItem) {
                           ✓ Verified
                         </div>
                       )}
-                      <div style={{ fontSize: '14px', color: '#666' }}>⭐ {currentItem.seller_rating} ({currentItem.seller_reviews})</div>
+                      {currentItem.seller_rating != null && (
+                        <div style={{ fontSize: '14px', color: '#666' }}>⭐ {currentItem.seller_rating} ({currentItem.seller_reviews || 0})</div>
+                      )}
                     </div>
                   </div>
 
@@ -5065,7 +5077,7 @@ if (!appState.showAddItem) {
                   fontWeight: 'bold'
                 }}
               >
-                📋 My Listings ({appState.userListings?.length || 0})
+                📋 My Listings ({appState.userListings?.length || 0}){pendingIncomingCount > 0 ? ` · ${pendingIncomingCount} new` : ''}
               </button>
             </div>
 
@@ -5500,7 +5512,7 @@ if (!appState.showAddItem) {
                     transition: 'all 0.2s ease'
                   }}
                 >
-                  📋 My Listings ({appState.userListings?.length || 0})
+                  📋 My Listings ({appState.userListings?.length || 0}){pendingIncomingCount > 0 ? ` · ${pendingIncomingCount} new` : ''}
                 </button>
               </div>
               
@@ -8356,7 +8368,7 @@ if (!appState.showAddItem) {
       <BottomNavigation 
         currentView={appState.currentView}
         currentMode={appState.currentMode}
-        chatBadge={unreadChatCount + newAcceptedCount}
+        chatBadge={unreadChatCount}
         sellBadge={pendingIncomingCount}
         onViewChange={(view) => {
           console.log('Changing view to:', view);
