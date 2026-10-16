@@ -1150,10 +1150,12 @@ export class FirebaseNativeService {
     if (!response.ok) return { success: false, error: response.data?.error?.message };
     // Best-effort preview on the chat doc so the other side's chat list shows it.
     const touchUrl = `${this.firestoreUrl}/chats/${chatId}?key=${this.apiKey}` +
-      '&updateMask.fieldPaths=last_message&updateMask.fieldPaths=last_message_at';
+      '&updateMask.fieldPaths=last_message&updateMask.fieldPaths=last_message_at' +
+      '&updateMask.fieldPaths=last_sender_id';
     this._fsRequest('PATCH', touchUrl, this.createFirestoreDocument({
       last_message: data.text.slice(0, 200),
-      last_message_at: data.created_at
+      last_message_at: data.created_at,
+      last_sender_id: data.sender_id
     })).catch(() => {});
     return { success: true, message: { ...data, id: this._docId(response.data.name) } };
   }

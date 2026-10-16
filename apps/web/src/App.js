@@ -507,6 +507,7 @@ const SwipeMarketplace = () => {
     showInterestConfirmation: false,
     interestedItem: null,
     toast: null,
+    myInterests: [],
     showSettings: false,
     settingsCategories: [],
     settingsPriceRange: 0,
@@ -921,7 +922,7 @@ const SwipeMarketplace = () => {
       // Previous real account left (sign-out or direct switch): clear its
       // in-memory state and re-arm the hydration latches so the next account
       // (or re-sign-in) hydrates fresh from its own sources.
-      updateState({ userListings: [], savedItems: [], chats: [], buyerInterests: [] });
+      updateState({ userListings: [], savedItems: [], chats: [], buyerInterests: [], myInterests: [] });
       savedItemsHydrated.current = false;
       myListingsHydratedUid.current = null;
     }
@@ -957,6 +958,7 @@ const SwipeMarketplace = () => {
     item_image: doc.item_image || '',
     last_message: doc.last_message || 'Chat started — say hi!',
     last_message_at: doc.last_message_at || doc.created_at || 0,
+    last_sender_id: doc.last_sender_id || '',
     timestamp: formatMsgTime(doc.last_message_at || doc.created_at),
     messages: []
   });
@@ -1076,6 +1078,124 @@ const SwipeMarketplace = () => {
     }, 2800);
     return () => clearTimeout(t);
   }, [toastId]);
+
+  // Buyer side: my outgoing interests and where each one stands.
+  const refreshMyInterests = useCallback(async () => {
+    if (!myUid) return;
+    try {
+      const docs = await firebaseNative.getMyInterests(myUid);
+      const mine = docs
+        .map(d => ({
+          id: d.id,
+          itemId: d.item_id,
+          itemTitle: d.item_title || 'Item',
+          itemImage: d.item_image || '',
+          sellerId: d.seller_id,
+          sellerName: d.seller_name || 'Seller',
+          status: d.status || 'pending',
+          created_at: d.created_at || 0
+        }))
+        .sort((a, b) => b.created_at - a.created_at);
+      setAppState(prev => ({ ...prev, myInterests: mine }));
+    } catch (e) {
+      console.warn('refreshMyInterests failed:', e?.message);
+    }
+  }, [myUid]);
+
+  useEffect(() => {
+    if (!myUid) return;
+    const tick = () => { if (!document.hidden) refreshMyInterests(); };
+    tick();
+    const id = setInterval(tick, 20000);
+    return () => clearInterval(id);
+  }, [myUid, refreshMyInterests]);
+
+  // Unread tracking: per-device map of chatId -> last time I looked at it.
+  const seenKey = myUid ? `swipecity_chat_seen_${myUid}` : null;
+  const [chatSeen, setChatSeen] = useState({});
+  useEffect(() => {
+    if (!seenKey) { setChatSeen({}); return; }
+    try { setChatSeen(JSON.parse(localStorage.getItem(seenKey) || '{}')); } catch (e) { setChatSeen({}); }
+  }, [seenKey]);
+  const markChatSeen = useCallback((chatId) => {
+    if (!seenKey || !chatId) return;
+    setChatSeen(prev => {
+      const next = { ...prev, [chatId]: Date.now() };
+      try { localStorage.setItem(seenKey, JSON.stringify(next)); } catch (e) {}
+      return next;
+    });
+  }, [seenKey]);
+  // Keep the open chat marked seen as new messages arrive in it.
+  const activeChatMsgCount = appState.activeChat?.messages?.length || 0;
+  useEffect(() => { if (activeChatId) markChatSeen(activeChatId); }, [activeChatId, activeChatMsgCount, markChatSeen]);
+
+  const isChatUnread = (chat) => !!chat && chat.id !== activeChatId &&
+    !!chat.last_sender_id && chat.last_sender_id !== myUid &&
+    (chat.last_message_at || 0) > (chatSeen[chat.id] || 0);
+  const unreadChatCount = (appState.chats || []).filter(isChatUnread).length;
+  // Buyer: an accepted interest whose chat I haven't opened yet is news too.
+  const newAcceptedCount = appState.currentMode === 'buyer'
+    ? (appState.myInterests || []).filter(i => i.status === 'accepted' &&
+        !chatSeen[firebaseNative.chatIdFor(myUid, i.sellerId, i.itemId)]).length
+    : 0;
+  const pendingIncomingCount = (appState.buyerInterests || [])
+    .filter(i => i.remote && i.status === 'pending').length;
+
+  const renderMyInterests = () => {
+    if (appState.currentMode !== 'buyer' || !appState.myInterests?.length) return null;
+    const statusLabel = {
+      pending: { text: 'Waiting for seller', color: '#ff9800' },
+      accepted: { text: 'Accepted · tap to chat', color: '#4CAF50' },
+      rejected: { text: 'Seller passed', color: '#999' }
+    };
+    return (
+      <div style={{ borderBottom: '6px solid #f3f3f7' }}>
+        <div style={{ padding: '12px 20px 6px', fontSize: '13px', fontWeight: 'bold', color: '#667eea' }}>
+          Your interests
+        </div>
+        <div style={{ maxHeight: '230px', overflow: 'auto' }}>
+          {appState.myInterests.map(i => {
+            const st = statusLabel[i.status] || statusLabel.pending;
+            const chatId = firebaseNative.chatIdFor(myUid, i.sellerId, i.itemId);
+            const chat = (appState.chats || []).find(c => c.id === chatId);
+            const canOpen = i.status === 'accepted';
+            return (
+              <div
+                key={i.id}
+                onClick={() => {
+                  if (!canOpen) return;
+                  openChat(chat || {
+                    id: chatId, buyer_id: myUid, seller_id: i.sellerId, seller_name: i.sellerName,
+                    item_id: i.itemId, item_title: i.itemTitle, item_image: i.itemImage, messages: []
+                  });
+                }}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '12px', padding: '8px 20px',
+                  cursor: canOpen ? 'pointer' : 'default', opacity: i.status === 'rejected' ? 0.6 : 1
+                }}
+              >
+                {i.itemImage ? (
+                  <img src={i.itemImage} alt={i.itemTitle}
+                    style={{ width: '44px', height: '44px', borderRadius: '8px', objectFit: 'cover' }} />
+                ) : (
+                  <div style={{ width: '44px', height: '44px', borderRadius: '8px', background: '#eee' }} />
+                )}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: '14px', fontWeight: 600, color: '#333', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {i.itemTitle}
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#888' }}>{i.sellerName}</div>
+                </div>
+                <div style={{ fontSize: '12px', fontWeight: 'bold', color: st.color, textAlign: 'right' }}>
+                  {st.text}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
 
   // Sample chat data
   const sampleChats = [
@@ -1773,6 +1893,17 @@ const handleExpressInterest = useCallback((item, { quiet = false } = {}) => {
   if (hasRealSeller && myUid && item.seller_id !== myUid) {
     firebaseNative.createInterest(newInterest).then(res => {
       if (!res?.success) console.warn('createInterest failed:', res?.error);
+      else setAppState(prev => ({
+        ...prev,
+        myInterests: [
+          {
+            id: res.interest.id, itemId: item.id, itemTitle: item.title || 'Item',
+            itemImage: item.image_url || '', sellerId: item.seller_id,
+            sellerName: item.seller_name || 'Seller', status: 'pending', created_at: Date.now()
+          },
+          ...(prev.myInterests || []).filter(i => i.id !== res.interest.id)
+        ]
+      }));
     }).catch(err => console.warn('createInterest failed:', err?.message));
   }
 
@@ -6227,6 +6358,7 @@ if (!appState.showAddItem) {
             </div>
 
             <div style={{ flex: 1, overflow: 'auto' }}>
+              {renderMyInterests()}
               {appState.chats && appState.chats.length > 0 ? (
                 appState.chats.map(chat => (
                   <div
@@ -6254,6 +6386,7 @@ if (!appState.showAddItem) {
                     />
                     <div style={{ flex: 1 }}>
                       <h4 style={{ margin: 0, fontSize: '16px', color: '#333' }}>
+                        {isChatUnread(chat) && <span style={{ color: '#ff3b30', marginRight: '6px' }}>●</span>}
                         {appState.currentMode === 'seller' 
                           ? chat.buyer_name 
                           : chat.seller_name}
@@ -7017,6 +7150,7 @@ if (!appState.showAddItem) {
           </div>
           
           <div style={{ flex: 1, overflow: 'auto' }}>
+            {renderMyInterests()}
             {appState.chats.length === 0 ? (
               <div style={{
                 padding: '60px 20px',
@@ -7044,6 +7178,7 @@ if (!appState.showAddItem) {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <div>
                       <h4 style={{ margin: '0 0 5px 0', fontSize: '16px' }}>
+                        {isChatUnread(chat) && <span style={{ color: '#ff3b30', marginRight: '6px' }}>●</span>}
                         {appState.currentMode === 'seller' 
                           ? chat.buyer_name 
                           : chat.seller_name}
@@ -8212,6 +8347,8 @@ if (!appState.showAddItem) {
       <BottomNavigation 
         currentView={appState.currentView}
         currentMode={appState.currentMode}
+        chatBadge={unreadChatCount + newAcceptedCount}
+        sellBadge={pendingIncomingCount}
         onViewChange={(view) => {
           console.log('Changing view to:', view);
 

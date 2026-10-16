@@ -2,7 +2,28 @@ import React from 'react';
 
 // Bottom Navigation Component
 // Extracted from App.js (no behavior change).
-const BottomNavigation = ({ currentView, currentMode, onViewChange, onModeChange, onShowTutorial }) => {
+const Badge = ({ count }) => (count > 0 ? (
+  <span style={{
+    position: 'absolute',
+    top: '-4px',
+    right: '-10px',
+    background: '#ff3b30',
+    color: 'white',
+    borderRadius: '9px',
+    minWidth: '18px',
+    height: '18px',
+    padding: '0 5px',
+    fontSize: '11px',
+    fontWeight: 'bold',
+    lineHeight: '18px',
+    textAlign: 'center',
+    boxSizing: 'border-box'
+  }}>
+    {count > 9 ? '9+' : count}
+  </span>
+) : null);
+
+const BottomNavigation = ({ currentView, currentMode, onViewChange, onModeChange, onShowTutorial, chatBadge = 0, sellBadge = 0 }) => {
   // Detect if we're on Android (Capacitor provides this info)
   const isAndroid = /android/i.test(navigator.userAgent) || window.Capacitor?.getPlatform?.() === 'android';
 
@@ -66,10 +87,12 @@ const BottomNavigation = ({ currentView, currentMode, onViewChange, onModeChange
               fontSize: '11px',
               fontWeight: 'bold',
               cursor: 'pointer',
-              transition: 'all 0.2s ease'
+              transition: 'all 0.2s ease',
+              position: 'relative'
             }}
           >
             💰 Sell
+            {currentMode !== 'seller' && <Badge count={sellBadge} />}
           </button>
         </div>
       </div>
@@ -95,7 +118,10 @@ const BottomNavigation = ({ currentView, currentMode, onViewChange, onModeChange
             minWidth: '60px'
           }}
         >
-          <div style={{ fontSize: '20px', marginBottom: '2px' }}>💬</div>
+          <div style={{ fontSize: '20px', marginBottom: '2px', position: 'relative' }}>
+            💬
+            <Badge count={chatBadge} />
+          </div>
           <span style={{ fontSize: '9px', fontWeight: 'bold' }}>Chats</span>
         </button>
 
