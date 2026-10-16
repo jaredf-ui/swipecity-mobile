@@ -1034,6 +1034,9 @@ export class FirebaseNativeService {
   }
 
   // ---- Interests ----
+  // One interest per buyer per item: the doc id is `${item_id}_${buyer_id}`, so a
+  // repeat swipe hits ALREADY_EXISTS (treated as success) instead of spamming the
+  // seller's inbox with duplicates.
   async createInterest(interest) {
     if (!this.currentUser?.uid) return { success: false, error: 'Not authenticated' };
     // Hard-map to snake_case (callers may pass camelCase); buyer_id must be auth.uid.
@@ -1049,9 +1052,19 @@ export class FirebaseNativeService {
       status: 'pending',
       created_at: Date.now()
     };
-    const response = await this._fsRequest('POST', `${this.firestoreUrl}/interests?key=${this.apiKey}`, this.createFirestoreDocument(data));
-    if (!response.ok) return { success: false, error: response.data?.error?.message || 'createInterest failed' };
-    return { success: true, interest: { ...data, id: this._docId(response.data.name) } };
+    if (!data.item_id || !data.seller_id) return { success: false, error: 'Missing item or seller' };
+    const docId = `${data.item_id}_${data.buyer_id}`;
+    const url = `${this.firestoreUrl}/interests?key=${this.apiKey}&documentId=${encodeURIComponent(docId)}`;
+    const response = await this._fsRequest('POST', url, this.createFirestoreDocument(data));
+    if (!response.ok) {
+      if (this._alreadyExists(response)) return { success: true, duplicate: true, interest: { ...data, id: docId } };
+      return { success: false, error: response.data?.error?.message || 'createInterest failed' };
+    }
+    return { success: true, interest: { ...data, id: docId } };
+  }
+
+  _alreadyExists(response) {
+    return response.status === 409 || response.data?.error?.status === 'ALREADY_EXISTS';
   }
 
   async getIncomingInterests(sellerId) {
@@ -1059,6 +1072,15 @@ export class FirebaseNativeService {
     return this.runQuery({
       from: [{ collectionId: 'interests' }],
       where: { fieldFilter: { field: { fieldPath: 'seller_id' }, op: 'EQUAL', value: { stringValue: sellerId } } },
+      limit: 200
+    });
+  }
+
+  async getMyInterests(buyerId) {
+    if (!buyerId) return [];
+    return this.runQuery({
+      from: [{ collectionId: 'interests' }],
+      where: { fieldFilter: { field: { fieldPath: 'buyer_id' }, op: 'EQUAL', value: { stringValue: buyerId } } },
       limit: 200
     });
   }
@@ -1080,18 +1102,28 @@ export class FirebaseNativeService {
     return `chat_${sorted[0]}_${sorted[1]}_${itemId}`;
   }
 
+  // Create-only (POST with documentId): if the chat already exists we leave it
+  // alone, so accepting twice or both sides racing never clobbers it.
   async createChatDoc(chatId, participants, meta = {}) {
     const data = {
       participants,
       item_id: meta.item_id,
       item_title: meta.item_title || '',
+      item_image: meta.item_image || '',
       buyer_id: meta.buyer_id,
+      buyer_name: meta.buyer_name || '',
       seller_id: meta.seller_id,
+      seller_name: meta.seller_name || '',
+      last_message: '',
+      last_message_at: meta.created_at || Date.now(),
       created_at: meta.created_at || Date.now()
     };
-    const url = `${this.firestoreUrl}/chats/${chatId}?key=${this.apiKey}`;
-    const response = await this._fsRequest('PATCH', url, this.createFirestoreDocument(data));
-    return { success: response.ok, error: response.ok ? null : response.data?.error?.message, chatId };
+    const url = `${this.firestoreUrl}/chats?key=${this.apiKey}&documentId=${encodeURIComponent(chatId)}`;
+    const response = await this._fsRequest('POST', url, this.createFirestoreDocument(data));
+    if (!response.ok && !this._alreadyExists(response)) {
+      return { success: false, error: response.data?.error?.message || 'createChatDoc failed', chatId };
+    }
+    return { success: true, chatId, chat: { ...data, id: chatId } };
   }
 
   async sendChatMessage(chatId, message) {
@@ -1104,19 +1136,26 @@ export class FirebaseNativeService {
     const url = `${this.firestoreUrl}/chats/${chatId}/messages?key=${this.apiKey}`;
     const response = await this._fsRequest('POST', url, this.createFirestoreDocument(data));
     if (!response.ok) return { success: false, error: response.data?.error?.message };
+    // Best-effort preview on the chat doc so the other side's chat list shows it.
+    const touchUrl = `${this.firestoreUrl}/chats/${chatId}?key=${this.apiKey}` +
+      '&updateMask.fieldPaths=last_message&updateMask.fieldPaths=last_message_at';
+    this._fsRequest('PATCH', touchUrl, this.createFirestoreDocument({
+      last_message: data.text.slice(0, 200),
+      last_message_at: data.created_at
+    })).catch(() => {});
     return { success: true, message: { ...data, id: this._docId(response.data.name) } };
   }
 
-  async loadChatMessages(chatId, limitN = 100) {
-    const url = `${this.firestoreUrl}/chats/${chatId}/messages?key=${this.apiKey}&pageSize=${limitN}`;
-    const response = await this._fsRequest('GET', url);
-    if (!response.ok) return [];
-    const docs = response.data?.documents || [];
-    return docs.map(d => {
-      const p = this.parseFirestoreDocument(d);
-      p.id = this._docId(d.name);
-      return p;
-    }).sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
+  // Newest `limitN` messages, returned oldest-first. A single-field orderBy needs
+  // no composite index. (A plain collection GET orders by random doc id, which
+  // would return an arbitrary subset once a chat passes the page size.)
+  async loadChatMessages(chatId, limitN = 200) {
+    const rows = await this.runQuery({
+      from: [{ collectionId: 'messages' }],
+      orderBy: [{ field: { fieldPath: 'created_at' }, direction: 'DESCENDING' }],
+      limit: limitN
+    }, `/chats/${chatId}`);
+    return rows.reverse();
   }
 
   async loadUserChats(uid) {

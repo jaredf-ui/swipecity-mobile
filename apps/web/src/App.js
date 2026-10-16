@@ -130,35 +130,6 @@ const mockItems = [
   }
 ];
 
-const mockChats = [
-  {
-    id: 'demo_chat',
-    seller_name: 'Demo Seller',
-    item_title: 'Demo Item',
-    item_image: 'https://images.unsplash.com/photo-1556906781-9a412961c28c?w=400&h=400&fit=crop',
-    seller_id: 'demo_seller',
-    item_id: 'demo_item',
-    last_message: 'Hi! Interested in this item?',
-    timestamp: '2:30 PM',
-    unread: false,
-    messages: [
-      {
-        id: 'm1',
-        sender_id: 'demo_seller',
-        sender_name: 'Demo Seller',
-        text: 'Hi! Thanks for your interest!',
-        timestamp: '2:30 PM'
-      },
-      {
-        id: 'm2',
-        sender_id: 'user123',
-        sender_name: 'You',
-        text: 'Is this still available?',
-        timestamp: '2:32 PM'
-      }
-    ]
-  }
-];
 
 const categories = [
   '👟 Sneakers',
@@ -406,20 +377,6 @@ const SwipeMarketplace = () => {
   
   const dataManager = user?.email ? getDataManager(user.email) : null;
   
-  // Helper function to save chats to localStorage (defined early to avoid temporal dead zone)
-  // Mode must be passed explicitly to avoid dependency issues
-  const saveChatsToStorage = useCallback((chats, mode) => {
-    if (user && mode) {
-      try {
-        const userKey = `swipecity_user_${user.email.replace(/[@+.]/g, '_')}`;
-        const storageKey = `${userKey}_${mode}_chats`;
-        localStorage.setItem(storageKey, JSON.stringify(chats));
-        console.log(`💾 Saved ${mode} chats to localStorage:`, chats.length, 'chats');
-      } catch (error) {
-        console.error('Failed to save chats to localStorage:', error);
-      }
-    }
-  }, [user]);
 
   // openChat function moved to after updateState definition to avoid temporal dead zone
   
@@ -969,60 +926,144 @@ const SwipeMarketplace = () => {
     prevUidRef.current = uid;
   }, [user?.uid, updateState]);
 
-  // Helper function to open a chat with fresh data from Firebase/localStorage
+  // ---- Shared (cross-device) interests + chats, via firebaseNative REST ----
+  // Both phones read/write the same Firestore docs: an interest is
+  // interests/{itemId_buyerUid}; accepting it creates chats/{chatIdFor(...)},
+  // whose messages live in chats/{id}/messages. Polling (not listeners) because
+  // the REST layer is the only reliable transport in the iOS WebView.
+  const myUid = user?.uid || user?.id || null;
+  const myDisplayName = user?.displayName || user?.name || user?.username ||
+    (user?.email ? user.email.split('@')[0] : 'SwipeCity user');
+
+  const formatMsgTime = (ms) => {
+    if (!ms) return '';
+    const d = new Date(ms);
+    const sameDay = d.toDateString() === new Date().toDateString();
+    return sameDay
+      ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  };
+
+  const chatFromDoc = (doc) => ({
+    id: doc.id,
+    buyer_id: doc.buyer_id,
+    buyer_name: doc.buyer_name || 'Buyer',
+    seller_id: doc.seller_id,
+    seller_name: doc.seller_name || 'Seller',
+    item_id: doc.item_id,
+    item_title: doc.item_title || '',
+    item_image: doc.item_image || '',
+    last_message: doc.last_message || 'Chat started — say hi!',
+    last_message_at: doc.last_message_at || doc.created_at || 0,
+    timestamp: formatMsgTime(doc.last_message_at || doc.created_at),
+    messages: []
+  });
+
+  const msgFromDoc = (doc) => ({
+    id: doc.id,
+    sender_id: doc.sender_id,
+    text: doc.text || '',
+    created_at: doc.created_at || 0,
+    timestamp: formatMsgTime(doc.created_at)
+  });
+
+  // Load this account's chats for the current mode (seller-side chats in seller
+  // mode, buyer-side in buyer mode). Keeps already-loaded messages on the
+  // active chat so a refresh never blanks an open conversation.
+  const refreshChats = useCallback(async () => {
+    if (!myUid) return;
+    try {
+      const docs = await firebaseNative.loadUserChats(myUid);
+      const side = appState.currentMode === 'seller' ? 'seller_id' : 'buyer_id';
+      const chats = docs
+        .filter(d => d[side] === myUid)
+        .map(chatFromDoc)
+        .sort((a, b) => (b.last_message_at || 0) - (a.last_message_at || 0));
+      setAppState(prev => ({ ...prev, chats }));
+    } catch (e) {
+      console.warn('refreshChats failed:', e?.message);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myUid, appState.currentMode]);
+
+  const refreshActiveChatMessages = useCallback(async (chatId) => {
+    if (!chatId) return;
+    try {
+      const msgs = (await firebaseNative.loadChatMessages(chatId)).map(msgFromDoc);
+      setAppState(prev => {
+        if (!prev.activeChat || prev.activeChat.id !== chatId) return prev;
+        // Keep optimistic messages that the server hasn't returned yet.
+        const pending = (prev.activeChat.messages || []).filter(m => m.pending);
+        return { ...prev, activeChat: { ...prev.activeChat, messages: [...msgs, ...pending] } };
+      });
+    } catch (e) {
+      console.warn('loadChatMessages failed:', e?.message);
+    }
+  }, []);
+
   const openChat = useCallback(async (chat) => {
     if (!user?.email) {
       console.log('🔐 Authentication required for messaging');
       updateState({ showAuthModal: true });
       return;
     }
+    updateState({ activeChat: { ...chat, messages: chat.messages || [] } });
+    refreshActiveChatMessages(chat.id);
+  }, [user, updateState, refreshActiveChatMessages]);
 
+  // Seller inbox: pull interests on my listings from Firestore and merge them
+  // into buyerInterests (the field names the listing cards already render).
+  const refreshIncomingInterests = useCallback(async () => {
+    if (!myUid) return;
     try {
-      const mode = appState.currentMode;
-      let savedChats = [];
-      
-      // Try to load from Firebase first for cross-device sync
-      if (user.uid && window.firebaseServices?.firestore) {
-        try {
-          savedChats = await window.firebaseServices.firestore.loadUserChats(user.uid, mode);
-          console.log(`🔥 Loaded ${mode} chats from Firebase:`, savedChats.length);
-        } catch (firebaseError) {
-          console.error(`Failed to load ${mode} chats from Firebase:`, firebaseError);
-          savedChats = []; // Will fallback to localStorage
-        }
-      }
-      
-      // Fallback to localStorage if Firebase failed or no data
-      if (savedChats.length === 0) {
-        const userKey = `swipecity_user_${user.email.replace(/[@+.]/g, '_')}`;
-        const storageKey = `${userKey}_${mode}_chats`;
-        const savedData = localStorage.getItem(storageKey);
-        
-        if (savedData) {
-          savedChats = JSON.parse(savedData);
-          console.log(`💾 Loaded ${mode} chats from localStorage:`, savedChats.length);
-        }
-      }
-      
-      if (savedChats.length > 0) {
-        const freshChat = savedChats.find(savedChat => savedChat.id === chat.id);
-        
-        if (freshChat) {
-          console.log(`🔄 Opening ${mode} chat with fresh data:`, freshChat.id, 'Messages:', freshChat.messages?.length || 0);
-          updateState({ activeChat: freshChat, chats: savedChats });
-        } else {
-          console.log(`⚠️ Chat not found in saved ${mode} data, using original`);
-          updateState({ activeChat: chat });
-        }
-      } else {
-        console.log(`⚠️ No saved ${mode} data found, using original chat`);
-        updateState({ activeChat: chat });
-      }
-    } catch (error) {
-      console.error('Failed to load fresh chat data:', error);
-      updateState({ activeChat: chat });
+      const docs = await firebaseNative.getIncomingInterests(myUid);
+      const incoming = docs.map(d => ({
+        id: d.id,
+        itemId: d.item_id,
+        buyerId: d.buyer_id,
+        buyerName: d.buyer_name || 'A buyer',
+        buyerAvatar: d.buyer_avatar || 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=face',
+        sellerId: d.seller_id,
+        sellerName: d.seller_name,
+        itemTitle: d.item_title,
+        itemImage: d.item_image,
+        timestamp: d.created_at,
+        status: d.status || 'pending',
+        remote: true
+      }));
+      setAppState(prev => {
+        const byId = new Map((prev.buyerInterests || []).map(i => [i.id, i]));
+        incoming.forEach(i => byId.set(i.id, { ...byId.get(i.id), ...i }));
+        return { ...prev, buyerInterests: [...byId.values()] };
+      });
+    } catch (e) {
+      console.warn('refreshIncomingInterests failed:', e?.message);
     }
-  }, [user, updateState, appState.currentMode]);
+  }, [myUid]);
+
+  // Poll while signed in: chats + inbox every 20s, and the open chat every 4s.
+  // Paused while the app is backgrounded.
+  useEffect(() => {
+    if (!myUid) return;
+    const tick = () => {
+      if (document.hidden) return;
+      refreshChats();
+      refreshIncomingInterests();
+    };
+    tick();
+    const id = setInterval(tick, 20000);
+    document.addEventListener('visibilitychange', tick);
+    return () => { clearInterval(id); document.removeEventListener('visibilitychange', tick); };
+  }, [myUid, refreshChats, refreshIncomingInterests]);
+
+  const activeChatId = appState.activeChat?.id;
+  useEffect(() => {
+    if (!activeChatId) return;
+    const id = setInterval(() => {
+      if (!document.hidden) refreshActiveChatMessages(activeChatId);
+    }, 4000);
+    return () => clearInterval(id);
+  }, [activeChatId, refreshActiveChatMessages]);
 
   // Sample chat data
   const sampleChats = [
@@ -1682,13 +1723,16 @@ const resetTutorial = useCallback(() => {
 const handleExpressInterest = useCallback((item) => {
   console.log('🎯 Expressing interest in:', item.title);
 
-  // Create a new interest entry
+  // Firebase uids are 28 chars; demo/mock listings use ids like 'seller1' and
+  // have no real seller to notify.
+  const hasRealSeller = typeof item.seller_id === 'string' && item.seller_id.length >= 20;
+
   const newInterest = {
-    id: `interest_${Date.now()}`,
+    id: myUid ? `${item.id}_${myUid}` : `interest_${Date.now()}`,
     itemId: item.id,
-    buyerId: user?.uid || user?.id || 'user123',
-    buyerName: user?.displayName || user?.username || 'You',
-    buyerAvatar: user?.avatar_url || 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=face',
+    buyerId: myUid,
+    buyerName: myDisplayName,
+    buyerAvatar: user?.photoURL || user?.avatar_url || 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=face',
     sellerId: item.seller_id,
     sellerName: item.seller_name,
     itemTitle: item.title,
@@ -1697,26 +1741,22 @@ const handleExpressInterest = useCallback((item) => {
     status: 'pending'
   };
 
-  // Add interest to buyerInterests array (drives same-session UI)
+  // Same-session UI (dedupe: one interest per item per buyer).
   updateState({
-    buyerInterests: [...appState.buyerInterests, newInterest],
+    buyerInterests: [...appState.buyerInterests.filter(i => i.id !== newInterest.id), newInterest],
     showInterestConfirmation: true,
     interestedItem: item
   });
 
-  // Persist the interest so it is recorded beyond this session. Writes to
-  // Firebase when available on this platform, else localStorage. NOTE: a seller
-  // signed into a *different* account/device still won't receive this until the
-  // Firestore read layer (an incoming-interests inbox) is built — see the
-  // pre-submission audit; the data is captured now so that work can light up.
-  try {
-    DataService.createInterest(newInterest);
-  } catch (err) {
-    console.warn('createInterest failed:', err?.message);
+  // Send it to the seller's inbox (shared Firestore, works across devices).
+  if (hasRealSeller && myUid && item.seller_id !== myUid) {
+    firebaseNative.createInterest(newInterest).then(res => {
+      if (!res?.success) console.warn('createInterest failed:', res?.error);
+    }).catch(err => console.warn('createInterest failed:', err?.message));
   }
 
   console.log(`✅ Interest submitted for ${item.title} - awaiting seller approval`);
-}, [user, appState.buyerInterests, updateState]);
+}, [user, myUid, myDisplayName, appState.buyerInterests, updateState]);
 
 const closeInterestConfirmation = useCallback(() => {
   updateState({ showInterestConfirmation: false, interestedItem: null });
@@ -1918,56 +1958,83 @@ const handleDeleteListing = useCallback(async () => {
   }
 }, [appState.editingListing, appState.userListings, updateState, user]);
 
-// Handle seller approving buyer interest
-const handleApproveInterest = useCallback((interest) => {
-  // Update interest status to approved
-  const updatedInterests = appState.buyerInterests.map(item => 
-    item.id === interest.id ? { ...item, status: 'approved' } : item
-  );
-  
-  // Create a new chat between seller and buyer (without automatic message)
-  const newChat = {
-    id: `chat_${interest.id}`,
-    buyer_name: interest.buyerName,
-    seller_name: interest.sellerName,
+// Seller accepts a buyer's interest: mark it accepted in Firestore and create
+// the shared chat both phones compute the same id for.
+const handleApproveInterest = useCallback(async (interest) => {
+  const sellerId = myUid;
+  if (!sellerId || !interest.buyerId) {
+    alert('Please sign in again to accept this buyer.');
+    return;
+  }
+  const chatId = firebaseNative.chatIdFor(interest.buyerId, sellerId, interest.itemId);
+
+  if (interest.remote) {
+    const res = await firebaseNative.updateInterestStatus(interest.id, 'accepted');
+    if (!res?.success) {
+      console.warn('updateInterestStatus failed:', res?.error);
+      alert("Couldn't accept right now. Check your connection and try again.");
+      return;
+    }
+  }
+
+  const created = await firebaseNative.createChatDoc(chatId, [interest.buyerId, sellerId], {
+    item_id: interest.itemId,
     item_title: interest.itemTitle,
     item_image: interest.itemImage,
     buyer_id: interest.buyerId,
-    seller_id: interest.sellerId,
+    buyer_name: interest.buyerName,
+    seller_id: sellerId,
+    seller_name: myDisplayName
+  });
+  if (!created?.success) {
+    console.warn('createChatDoc failed:', created?.error);
+    alert("Accepted, but the chat couldn't be opened. Try again in a moment.");
+  }
+
+  const newChat = created?.chat ? chatFromDoc(created.chat) : {
+    id: chatId,
+    buyer_id: interest.buyerId,
+    buyer_name: interest.buyerName,
+    seller_id: sellerId,
+    seller_name: myDisplayName,
     item_id: interest.itemId,
-    last_message: 'Chat started',
-    timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    unread: false,
+    item_title: interest.itemTitle,
+    item_image: interest.itemImage,
+    last_message: 'Chat started — say hi!',
+    timestamp: '',
     messages: []
   };
-  
-  const updatedChats = [newChat, ...appState.chats.filter(chat => chat.id !== newChat.id)];
-  
-  updateState({ 
-    buyerInterests: updatedInterests,
-    chats: updatedChats,
+
+  updateState({
+    buyerInterests: appState.buyerInterests.map(i =>
+      i.id === interest.id ? { ...i, status: 'accepted' } : i
+    ),
+    chats: [newChat, ...appState.chats.filter(c => c.id !== newChat.id)],
     activeChat: newChat,
     showChats: true,
-    currentView: 'home' // Switch to home view which shows chats
+    currentView: 'home'
   });
-  
-  // Save chats to localStorage
-  saveChatsToStorage(updatedChats, appState.currentMode);
-  
-  console.log(`✅ Approved interest from ${interest.buyerName} for ${interest.itemTitle} - opening chat`);
-}, [appState.buyerInterests, appState.chats, appState.currentMode, updateState, saveChatsToStorage]);
+  refreshActiveChatMessages(chatId);
 
-// Handle seller rejecting buyer interest
-const handleRejectInterest = useCallback((interest) => {
-  if (window.confirm(`Decline ${interest.buyerName}'s interest in ${interest.itemTitle}?`)) {
-    // Update interest status to rejected
-    const updatedInterests = appState.buyerInterests.map(item => 
-      item.id === interest.id ? { ...item, status: 'rejected' } : item
-    );
-    
-    updateState({ buyerInterests: updatedInterests });
-    console.log(`❌ Rejected interest from ${interest.buyerName} for ${interest.itemTitle}`);
+  console.log(`✅ Accepted interest from ${interest.buyerName} for ${interest.itemTitle} - opening chat`);
+}, [myUid, myDisplayName, appState.buyerInterests, appState.chats, updateState, refreshActiveChatMessages]);
+
+const handleRejectInterest = useCallback(async (interest) => {
+  if (!window.confirm(`Decline ${interest.buyerName}'s interest in ${interest.itemTitle}?`)) return;
+  if (interest.remote) {
+    const res = await firebaseNative.updateInterestStatus(interest.id, 'rejected');
+    if (!res?.success) {
+      console.warn('updateInterestStatus failed:', res?.error);
+      alert("Couldn't decline right now. Check your connection and try again.");
+      return;
+    }
   }
+  updateState({
+    buyerInterests: appState.buyerInterests.map(i =>
+      i.id === interest.id ? { ...i, status: 'rejected' } : i
+    )
+  });
+  console.log(`❌ Rejected interest from ${interest.buyerName} for ${interest.itemTitle}`);
 }, [appState.buyerInterests, updateState]);
 
 const openSettings = useCallback(() => {
@@ -2315,99 +2382,55 @@ useEffect(() => {
   }
 }, [updateState]);
 
-  // Load chats from localStorage when user changes or mode changes
+  // Clear chats on sign-out. (Signed-in loading/polling is the shared-chat
+  // effect next to openChat; it re-runs when the mode changes.)
   useEffect(() => {
-    console.log('🔄 Chat loading useEffect triggered. User:', user?.email, 'Mode:', appState.currentMode);
-    if (user && user.email) {
-      try {
-        const mode = appState.currentMode;
-        const userKey = `swipecity_user_${user.email.replace(/[@+.]/g, '_')}`;
-        const storageKey = `${userKey}_${mode}_chats`;
-        console.log('🗝️ Looking for chats with key:', storageKey);
-        const savedChats = localStorage.getItem(storageKey);
-        
-        if (savedChats) {
-          const parsedChats = JSON.parse(savedChats);
-          console.log(`✅ Loaded ${mode} chats from localStorage:`, parsedChats.length, 'chats');
-          console.log('📚 Chat details:', parsedChats.map(c => ({ id: c.id, messageCount: c.messages?.length || 0, lastMessage: c.last_message })));
-          updateState({ chats: parsedChats });
-        } else {
-          // No saved chats for this mode, use mockChats for new user
-          console.log(`🔍 No saved ${mode} chats found, using mock chats`);
-          console.log('📚 Mock chat details:', mockChats.map(c => ({ id: c.id, messageCount: c.messages?.length || 0, lastMessage: c.last_message })));
-          updateState({ chats: mockChats });
-        }
-      } catch (error) {
-        console.error('Failed to load chats from localStorage:', error);
-        // Fallback to mockChats
-        updateState({ chats: mockChats });
-      }
-    } else {
-      // Clear chats when no user
-      console.log('🚫 No user, clearing chats');
-      updateState({ chats: [] });
-    }
-  }, [user, appState.currentMode, updateState]);
+    if (!user) updateState({ chats: [], activeChat: null });
+  }, [user, updateState]);
 
   // Moved to earlier in the component to avoid temporal dead zone error
 
-  // Direct localStorage message persistence
+  // Send to the shared chat (chats/{id}/messages). Shown optimistically; the
+  // 4s poll replaces it with the server copy.
   const sendMessage = useCallback(async (messageText) => {
-    if (!messageText.trim() || !appState.activeChat || !user?.email) return;
+    const text = (messageText || '').trim();
+    const chat = appState.activeChat;
+    if (!text || !chat || !user?.email) return;
 
-    const newMsg = {
-      id: `msg_${Date.now()}`,
-      sender_id: user?.uid || user?.id || 'user123',
-      sender_name: user?.displayName || user?.username || 'You',
-      text: messageText.trim(),
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    const tempId = `pending_${Date.now()}`;
+    const optimistic = {
+      id: tempId,
+      sender_id: myUid,
+      text,
+      created_at: Date.now(),
+      timestamp: formatMsgTime(Date.now()),
+      pending: true
     };
-
-    const updatedActiveChat = {
-      ...appState.activeChat,
-      messages: [...(appState.activeChat.messages || []), newMsg],
-      last_message: newMsg.text,
-      timestamp: newMsg.timestamp
-    };
-
-    const updatedChats = appState.chats.map(chat => 
-      chat.id === appState.activeChat.id 
-        ? { ...chat, last_message: newMsg.text, timestamp: newMsg.timestamp, messages: updatedActiveChat.messages }
-        : chat
-    );
-
-    // Update state first
-    updateState({
+    setAppState(prev => ({
+      ...prev,
       newMessage: '',
-      activeChat: updatedActiveChat,
-      chats: updatedChats
-    });
+      activeChat: prev.activeChat?.id === chat.id
+        ? { ...prev.activeChat, messages: [...(prev.activeChat.messages || []), optimistic] }
+        : prev.activeChat,
+      chats: prev.chats.map(c => c.id === chat.id
+        ? { ...c, last_message: text, last_message_at: optimistic.created_at, timestamp: optimistic.timestamp }
+        : c)
+    }));
 
-    // Save chats to both Firebase and localStorage for cross-device sync
-    try {
-      const mode = appState.currentMode;
-      
-      // Save to Firebase Firestore for cross-device sync (if available)
-      if (user.uid && window.firebaseServices?.firestore) {
-        try {
-          await window.firebaseServices.firestore.saveUserChats(user.uid, mode, updatedChats);
-          console.log(`✅ ${mode} chats saved to Firebase for cross-device sync`);
-        } catch (firebaseError) {
-          console.error(`Failed to save ${mode} chats to Firebase:`, firebaseError);
-          // Continue with localStorage fallback
-        }
-      }
-      
-      // Always save to localStorage as backup/immediate access
-      const userKey = `swipecity_user_${user.email.replace(/[@+.]/g, '_')}`;
-      const storageKey = `${userKey}_${mode}_chats`;
-      localStorage.setItem(storageKey, JSON.stringify(updatedChats));
-      console.log(`💾 ${mode} chats saved to localStorage:`, updatedChats.length);
-      
-    } catch (error) {
-      console.error('Failed to save chats:', error);
-    }
-  }, [appState.activeChat, appState.chats, appState.currentMode, user, updateState]);
+    const res = await firebaseNative.sendChatMessage(chat.id, { text });
+    setAppState(prev => {
+      if (prev.activeChat?.id !== chat.id) return prev;
+      const messages = (prev.activeChat.messages || []).map(m => {
+        if (m.id !== tempId) return m;
+        return res?.success
+          ? { ...m, ...msgFromDoc(res.message), pending: false }
+          : { ...m, pending: false, failed: true, timestamp: 'Not sent' };
+      });
+      return { ...prev, activeChat: { ...prev.activeChat, messages } };
+    });
+    if (!res?.success) console.warn('sendChatMessage failed:', res?.error);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appState.activeChat, user, myUid]);
 
   useEffect(() => {
     // Aggressive scroll position reset for mobile browsers
@@ -4066,15 +4089,15 @@ if (!appState.showAddItem) {
                   style={{
                     marginBottom: '15px',
                     display: 'flex',
-                    justifyContent: message.sender_id === (user?.id || 'user123') ? 'flex-end' : 'flex-start'
+                    justifyContent: message.sender_id === myUid ? 'flex-end' : 'flex-start'
                   }}
                 >
                   <div style={{
                     maxWidth: '70%',
                     padding: '12px 16px',
                     borderRadius: '18px',
-                    background: message.sender_id === (user?.id || 'user123') ? '#4CAF50' : 'white',
-                    color: message.sender_id === (user?.id || 'user123') ? 'white' : '#333',
+                    background: message.sender_id === myUid ? '#4CAF50' : 'white',
+                    color: message.sender_id === myUid ? 'white' : '#333',
                     boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
                   }}>
                     <p style={{ margin: '0 0 5px 0', fontSize: '14px' }}>{message.text}</p>
@@ -5662,7 +5685,7 @@ if (!appState.showAddItem) {
                 // photo so listings actually show their image (not just `images[]`).
                 image_url: (uploadedImages[0] && uploadedImages[0].url) || '',
                 seller_id: sellerId,
-                seller_name: user?.displayName || user?.username || 'You',
+                seller_name: myDisplayName,
                 created_at: Date.now(),
                 status: 'active'
               };
@@ -6832,15 +6855,15 @@ if (!appState.showAddItem) {
                 style={{
                   marginBottom: '15px',
                   display: 'flex',
-                  justifyContent: message.sender_id === (user?.id || 'user123') ? 'flex-end' : 'flex-start'
+                  justifyContent: message.sender_id === myUid ? 'flex-end' : 'flex-start'
                 }}
               >
                 <div style={{
                   maxWidth: '70%',
                   padding: '12px 16px',
                   borderRadius: '18px',
-                  background: message.sender_id === (user?.id || 'user123') ? '#4CAF50' : 'white',
-                  color: message.sender_id === (user?.id || 'user123') ? 'white' : '#333',
+                  background: message.sender_id === myUid ? '#4CAF50' : 'white',
+                  color: message.sender_id === myUid ? 'white' : '#333',
                   boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
                 }}>
                   <p style={{ margin: '0 0 5px 0', fontSize: '14px' }}>{message.text}</p>
@@ -6977,13 +7000,13 @@ if (!appState.showAddItem) {
                       <p style={{ margin: 0, fontSize: '13px', color: '#888' }}>
                         {chat.messages && chat.messages.length > 0 
                           ? chat.messages[chat.messages.length - 1].text
-                          : 'Start a conversation...'}
+                          : (chat.last_message || 'Start a conversation...')}
                       </p>
                     </div>
                     <span style={{ fontSize: '12px', color: '#999' }}>
                       {chat.messages && chat.messages.length > 0 
                         ? chat.messages[chat.messages.length - 1].timestamp
-                        : 'now'}
+                        : (chat.timestamp || '')}
                     </span>
                   </div>
                 </div>
@@ -8174,43 +8197,13 @@ if (!appState.showAddItem) {
             return;
           }
 
-          // DIRECT localStorage chat loading (mode-specific)
           if (view === 'chats' && user?.email) {
-            try {
-              const mode = appState.currentMode;
-              const userKey = `swipecity_user_${user.email.replace(/[@+.]/g, '_')}`;
-              const storageKey = `${userKey}_${mode}_chats`;
-              const savedData = localStorage.getItem(storageKey);
-              
-              if (savedData) {
-                const savedChats = JSON.parse(savedData);
-                console.log(`LOADED ${mode} CHATS FROM:`, storageKey, 'Count:', savedChats.length);
-                updateState({ 
-                  currentView: view,
-                  showChats: true,
-                  showProfile: view === 'profile',
-                  chats: savedChats
-                });
-              } else {
-                console.log('NO SAVED CHATS, using mock chats');
-                updateState({ 
-                  currentView: view,
-                  showChats: true,
-                  showProfile: view === 'profile',
-                  chats: mockChats
-                });
-                // Save mock chats for next time
-                localStorage.setItem(storageKey, JSON.stringify(mockChats));
-              }
-            } catch (error) {
-              console.error('Failed to load chats:', error);
-              updateState({ 
-                currentView: view,
-                showChats: true,
-                showProfile: view === 'profile',
-                chats: mockChats
-              });
-            }
+            updateState({
+              currentView: view,
+              showChats: true,
+              showProfile: false
+            });
+            refreshChats();
           } else {
             updateState({ 
               currentView: view,
