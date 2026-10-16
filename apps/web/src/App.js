@@ -43,6 +43,24 @@ const safeParseLocal = (key, fallback = {}) => {
 // seller behind them. Real listings carry a Firebase uid (28 chars).
 const isSampleItem = (item) => !(item && typeof item.seller_id === 'string' && item.seller_id.length >= 20);
 
+// Listings, seed data, onboarding and auto-fill each name categories
+// differently ('👟 Sneakers', 'Home & Garden', 'shoes'...). Map any of them to
+// the onboarding ids so preferences and listings can actually be compared.
+const CATEGORY_ALIASES = {
+  electronics: 'electronics', clothing: 'clothing', fashion: 'clothing', apparel: 'clothing',
+  shoes: 'shoes', sneakers: 'shoes', home: 'home', garden: 'home',
+  sports: 'sports', fitness: 'sports', outdoors: 'sports', books: 'books', media: 'books',
+  toys: 'toys', games: 'toys', beauty: 'beauty', health: 'beauty', automotive: 'automotive',
+  jewelry: 'jewelry', baby: 'baby', kids: 'baby', tools: 'tools', hardware: 'tools',
+  music: 'music', musical: 'music', art: 'art', crafts: 'art', furniture: 'furniture',
+  vintage: 'vintage', collectibles: 'vintage'
+};
+const normalizeCategory = (category) => {
+  const words = String(category || '').toLowerCase().match(/[a-z]+/g) || [];
+  for (const w of words) if (CATEGORY_ALIASES[w]) return CATEGORY_ALIASES[w];
+  return null;
+};
+
 const downscaleDataUrl = (dataUrl, maxDim = 1200, quality = 0.7) => new Promise((resolve) => {
   try {
     if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image')) {
@@ -773,41 +791,31 @@ const SwipeMarketplace = () => {
       }
     }
     
+    // Chosen categories (onboarding / settings). Older accounts stored numeric
+    // indexes, which never matched anything — ignore those.
+    const preferred = (user?.preferences?.categories || []).filter(c => typeof c === 'string');
+
     return sourceItems
       .map(item => {
-        // Get the category index for this item
-        const itemCategoryIndex = categories.indexOf(item.category);
-        
-        // Check if user has this category in their initial preferences
-        const isPreferredCategory = user?.preferences?.categories?.includes(itemCategoryIndex);
-        
-        // Calculate learned preference score from swipe behavior
-        let learnedScore = 0.5; // Neutral starting point
-        const categorySwipeData = swipeData[itemCategoryIndex];
+        const cat = normalizeCategory(item.category);
+        const isPreferredCategory = preferred.length > 0 && preferred.includes(cat);
+
+        // Learned preference from swipes in this category (after 5+ swipes).
+        let learnedScore = 0.5;
+        const categorySwipeData = cat ? swipeData[cat] : null;
         if (categorySwipeData && categorySwipeData.total >= 5) {
-          // Only use learned data after at least 5 swipes in this category
-          const likeRatio = categorySwipeData.likes / categorySwipeData.total;
-          learnedScore = likeRatio; // 0.0 to 1.0 based on actual swipe behavior
-          console.log(`🤖 Using learned preference for ${item.category}: ${Math.round(likeRatio * 100)}% like rate`);
+          learnedScore = categorySwipeData.likes / categorySwipeData.total;
         }
-        
-        // Combine initial preferences with learned behavior
+
         let finalScore = item.algorithmScore || 0.8;
-        
-        if (isPreferredCategory) {
-          // User selected this category initially - boost score
-          finalScore *= 1.0;
-        } else {
-          // User didn't select this category initially - reduce score
-          finalScore *= 0.3;
-        }
-        
-        // Apply learned behavior (weighted more heavily as user swipes more)
+        // No picks = no penalty; otherwise boost what they asked for.
+        if (preferred.length > 0 && !isPreferredCategory) finalScore *= 0.3;
+        // Real listings ahead of demo ones.
+        if (isSampleItem(item)) finalScore *= 0.5;
+
         const learnedWeight = categorySwipeData ? Math.min(categorySwipeData.total / 20, 0.7) : 0;
-        const initialWeight = 1 - learnedWeight;
-        
-        finalScore = (finalScore * initialWeight) + (learnedScore * 0.8 * learnedWeight);
-        
+        finalScore = (finalScore * (1 - learnedWeight)) + (learnedScore * 0.8 * learnedWeight);
+
         return {
           ...item,
           algorithmScore: finalScore
@@ -1930,7 +1938,7 @@ const handleSwipe = useCallback((direction) => {
     // LEARNING: Track swipe preferences for algorithm improvement
     const currentItem = items[appState.currentItemIndex];
     if (currentItem && user?.uid) {
-      const categoryIndex = categories.indexOf(currentItem.category);
+      const categoryIndex = normalizeCategory(currentItem.category) || 'other';
       
       // Get existing swipe data from localStorage
       const swipeDataKey = `swipecity_swipe_learning_${user.uid}`;
@@ -3331,6 +3339,7 @@ if (!appState.showAddItem) {
               // Save preferences using the auth context
               const preferences = {
                 searchKeywords: appState.searchKeywords,
+                categories: appState.selectedShoppingCategories || [],
                 minPrice: appState.minPrice,
                 maxPrice: appState.maxPrice,
                 cities: appState.selectedCities,

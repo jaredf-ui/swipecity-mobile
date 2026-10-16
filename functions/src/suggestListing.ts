@@ -16,7 +16,11 @@ const DAILY_LIMIT = 25; // per user; keeps one account from draining the credits
 const MAX_IMAGES = 3;
 const MAX_IMAGE_B64_CHARS = 1_500_000; // ~1.1MB JPEG
 
-const CATEGORIES = ['sneakers', 'vintage', 'electronics', 'home', 'books', 'fitness', 'other'];
+// Same ids as the onboarding "What are you shopping for?" step, so the feed can match them.
+const CATEGORIES = [
+  'electronics', 'clothing', 'shoes', 'home', 'sports', 'books', 'toys', 'beauty',
+  'automotive', 'jewelry', 'baby', 'tools', 'music', 'art', 'furniture', 'vintage', 'other',
+];
 const CONDITIONS = ['new', 'like-new', 'good', 'fair'];
 
 const SYSTEM_PROMPT = `You write listings for SwipeCity, a local secondhand marketplace (like Facebook Marketplace) in the US.
