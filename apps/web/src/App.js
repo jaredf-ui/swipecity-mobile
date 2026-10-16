@@ -486,9 +486,6 @@ const SwipeMarketplace = () => {
     editImages: [],
     // Bot prevention & reporting
     showCameraCapture: false,
-    verificationQuestion: null,
-    verificationAnswer: '',
-    verificationPassed: false,
     reportedItems: new Set(),
     userReportCount: 0,
     showReportModal: false,
@@ -1456,23 +1453,8 @@ const addListingPhotos = useCallback(async (fileList, source = 'camera') => {
       return;
     }
 
-    // Quick anti-bot verification, kept for both camera and library photos
-    const questions = [
-      "What's the main color of your item?",
-      "How many items are shown in this photo?",
-      "Is this item indoors or outdoors?",
-      "Is there text visible on your item?",
-      "What category best describes this item?"
-    ];
-
     const newImages = [];
     for (const file of files) {
-      const randomQuestion = questions[Math.floor(Math.random() * questions.length)];
-      const answer = prompt(`🤖 Quick verification: ${randomQuestion}\n\n(This helps prevent bots from posting fake items)`);
-      if (!answer || answer.trim().length < 2) {
-        alert('Please provide an answer to continue posting.');
-        return;
-      }
       const rawDataUrl = await new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = (event) => resolve(event.target.result);
@@ -1487,10 +1469,7 @@ const addListingPhotos = useCallback(async (fileList, source = 'camera') => {
         url: dataUrl,
         name: file.name,
         timestamp: Date.now(),
-        verified: true,
-        source,
-        verificationQuestion: randomQuestion,
-        verificationAnswer: answer.trim()
+        source
       });
     }
 
@@ -1573,30 +1552,12 @@ const addListingPhotos = useCallback(async (fileList, source = 'camera') => {
     }
     if (!dataUrl) return;
 
-    // Same anti-bot verification as the library path.
-    const questions = [
-      "What's the main color of your item?",
-      "How many items are shown in this photo?",
-      "Is this item indoors or outdoors?",
-      "Is there text visible on your item?",
-      "What category best describes this item?"
-    ];
-    const randomQuestion = questions[Math.floor(Math.random() * questions.length)];
-    const answer = prompt(`🤖 Quick verification: ${randomQuestion}\n\n(This helps prevent bots from posting fake items)`);
-    if (!answer || answer.trim().length < 2) {
-      alert('Please provide an answer to continue posting.');
-      return;
-    }
-
     const newImage = {
       file: null,
       url: dataUrl,
       name: `camera_${Date.now()}.jpg`,
       timestamp: Date.now(),
-      verified: true,
-      source: 'camera',
-      verificationQuestion: randomQuestion,
-      verificationAnswer: answer.trim()
+      source: 'camera'
     };
     updateState({ [stateKey]: [...currentImages, newImage] });
   }, [appState.selectedImages, appState.editImages, updateState]);
@@ -5420,7 +5381,7 @@ if (!appState.showAddItem) {
           <div style={{ marginBottom: '25px' }}>
             <h3 style={{ color: '#333', marginBottom: '8px', fontSize: '16px' }}>📸 Photos (up to 4)</h3>
             <p style={{ color: '#666', fontSize: '12px', marginBottom: '15px' }}>
-              🛡️ <strong>Quick verification:</strong> Take a photo with your camera or choose from your library. You'll answer a quick question per photo to help prevent fake listings. First photo will be the main image.
+              Take a photo or choose from your library. The first photo is the main image.
             </p>
             <div style={{
               display: 'grid',
