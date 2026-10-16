@@ -39,6 +39,10 @@ const safeParseLocal = (key, fallback = {}) => {
 // past Firestore's ~1MB doc limit (so saved/listed items silently fail to
 // persist). The camera plugin already downscales; this brings library photos in
 // line. Falls back to the original on any error.
+// Demo/seeded listings (stock photos, seller ids like 'seller1') have no real
+// seller behind them. Real listings carry a Firebase uid (28 chars).
+const isSampleItem = (item) => !(item && typeof item.seller_id === 'string' && item.seller_id.length >= 20);
+
 const downscaleDataUrl = (dataUrl, maxDim = 1200, quality = 0.7) => new Promise((resolve) => {
   try {
     if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image')) {
@@ -502,6 +506,7 @@ const SwipeMarketplace = () => {
     ], // { itemId, buyerId, buyerName, buyerAvatar, timestamp }
     showInterestConfirmation: false,
     interestedItem: null,
+    toast: null,
     showSettings: false,
     settingsCategories: [],
     settingsPriceRange: 0,
@@ -1061,6 +1066,16 @@ const SwipeMarketplace = () => {
     }, 4000);
     return () => clearInterval(id);
   }, [activeChatId, refreshActiveChatMessages]);
+
+  // Auto-hide toasts.
+  const toastId = appState.toast?.id;
+  useEffect(() => {
+    if (!toastId) return;
+    const t = setTimeout(() => {
+      setAppState(prev => (prev.toast?.id === toastId ? { ...prev, toast: null } : prev));
+    }, 2800);
+    return () => clearTimeout(t);
+  }, [toastId]);
 
   // Sample chat data
   const sampleChats = [
@@ -1716,8 +1731,18 @@ const resetTutorial = useCallback(() => {
   console.log('Tutorial reset - will show on next app load');
 }, [updateState]);
 
-const handleExpressInterest = useCallback((item) => {
+const showToast = useCallback((message) => {
+  updateState({ toast: { message, id: Date.now() } });
+}, [updateState]);
+
+// `quiet` (swipe right): no modal, just a toast, so swiping keeps flowing.
+const handleExpressInterest = useCallback((item, { quiet = false } = {}) => {
   console.log('🎯 Expressing interest in:', item.title);
+
+  if (isSampleItem(item)) {
+    showToast('This is a sample listing, so nothing was sent. Real listings go straight to the seller.');
+    return;
+  }
 
   // Firebase uids are 28 chars; demo/mock listings use ids like 'seller1' and
   // have no real seller to notify.
@@ -1740,9 +1765,9 @@ const handleExpressInterest = useCallback((item) => {
   // Same-session UI (dedupe: one interest per item per buyer).
   updateState({
     buyerInterests: [...appState.buyerInterests.filter(i => i.id !== newInterest.id), newInterest],
-    showInterestConfirmation: true,
-    interestedItem: item
+    ...(quiet ? {} : { showInterestConfirmation: true, interestedItem: item })
   });
+  if (quiet) showToast(`Interest sent to ${item.seller_name || 'the seller'}`);
 
   // Send it to the seller's inbox (shared Firestore, works across devices).
   if (hasRealSeller && myUid && item.seller_id !== myUid) {
@@ -1752,7 +1777,7 @@ const handleExpressInterest = useCallback((item) => {
   }
 
   console.log(`✅ Interest submitted for ${item.title} - awaiting seller approval`);
-}, [user, myUid, myDisplayName, appState.buyerInterests, updateState]);
+}, [user, myUid, myDisplayName, appState.buyerInterests, updateState, showToast]);
 
 const closeInterestConfirmation = useCallback(() => {
   updateState({ showInterestConfirmation: false, interestedItem: null });
@@ -1768,14 +1793,6 @@ const handleSwipe = useCallback((direction) => {
     if (direction === 'right' && !isAuthenticated) {
       console.log('🔐 Authentication required for liking items');
       updateState({ showAuthModal: true });
-      return;
-    }
-    
-    // Daily limit applies to interests (right swipes / likes) only — passing
-    // (left swipe) is free browsing and never counts toward the daily limit.
-    if (direction === 'right' && appState.dailySwipeCount >= appState.maxDailySwipes) {
-      console.log('🚫 Daily interest limit reached');
-      updateState({ showLimitModal: true, limitModalType: 'swipes' });
       return;
     }
     
@@ -1827,17 +1844,20 @@ const handleSwipe = useCallback((direction) => {
     
     const nextIndex = appState.currentItemIndex < items.length - 1 ? appState.currentItemIndex + 1 : 0;
     
-    // Only interests (right swipes / likes) count toward the daily limit.
-    // Passing is unlimited, so signed-out browsing never burns the daily count.
     updateState({
       currentItemIndex: nextIndex,
       lastPassedItem: direction === 'left' ? currentItem : null,
-      canUndo: direction === 'left',
-      dailySwipeCount: direction === 'right' ? appState.dailySwipeCount + 1 : appState.dailySwipeCount
+      canUndo: direction === 'left'
     });
-    
-    console.log(`✅ Swipe ${direction} recorded (${appState.dailySwipeCount + 1}/${appState.maxDailySwipes} today)`);
-}, [appState.currentItemIndex, appState.dailySwipeCount, appState.maxDailySwipes, items, currentItem, updateState, user]);  const handleUndo = useCallback(() => {
+
+    // Swipe right = "I'm interested": goes to the seller's inbox (the tutorial
+    // promises this; previously a right swipe only animated).
+    if (direction === 'right' && currentItem) {
+      handleExpressInterest(currentItem, { quiet: true });
+    }
+
+    console.log(`✅ Swipe ${direction} recorded`);
+}, [appState.currentItemIndex, items, currentItem, updateState, user, handleExpressInterest]);  const handleUndo = useCallback(() => {
     if (appState.canUndo && appState.lastPassedItem) {
       // Go back to the passed item
       const lastItemIndex = items.findIndex(item => item.id === appState.lastPassedItem.id);
@@ -3341,6 +3361,24 @@ if (!appState.showAddItem) {
                     LIKE
                   </div>
                   
+                  {isSampleItem(currentItem) && (
+                    <div style={{
+                      position: 'absolute',
+                      top: '15px',
+                      left: '15px',
+                      background: 'rgba(0,0,0,0.65)',
+                      color: 'white',
+                      padding: '5px 10px',
+                      borderRadius: '12px',
+                      fontSize: '12px',
+                      fontWeight: 'bold',
+                      letterSpacing: '0.5px',
+                      zIndex: 10
+                    }}>
+                      SAMPLE
+                    </div>
+                  )}
+
                   {/* Report Button */}
                   <button
                     onClick={(e) => {
@@ -3555,17 +3593,9 @@ if (!appState.showAddItem) {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '15px' }}>
                     <span style={{ color: '#888', fontSize: '14px' }}>📍 {currentItem.city || currentItem.location || 'Location not specified'}</span>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-                      <span style={{ color: '#888', fontSize: '14px' }}>❤️ {currentItem.likes_count} likes</span>
-                      <div style={{
-                        background: 'rgba(102, 126, 234, 0.1)',
-                        color: '#667eea',
-                        padding: '4px 8px',
-                        borderRadius: '12px',
-                        fontSize: '12px',
-                        fontWeight: '600'
-                      }}>
-                        {appState.dailySwipeCount}/{appState.maxDailySwipes} today
-                      </div>
+                      {typeof currentItem.likes_count === 'number' && (
+                        <span style={{ color: '#888', fontSize: '14px' }}>❤️ {currentItem.likes_count} likes</span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -3878,6 +3908,29 @@ if (!appState.showAddItem) {
                 </button>
               </div>
             </div>
+          </div>
+        )}
+
+        {appState.toast && (
+          <div
+            key={appState.toast.id}
+            onClick={() => updateState({ toast: null })}
+            style={{
+              position: 'fixed',
+              left: '16px',
+              right: '16px',
+              top: 'calc(env(safe-area-inset-top) + 16px)',
+              background: 'rgba(30, 30, 40, 0.92)',
+              color: 'white',
+              padding: '12px 16px',
+              borderRadius: '12px',
+              fontSize: '14px',
+              textAlign: 'center',
+              zIndex: 3000,
+              boxShadow: '0 4px 16px rgba(0,0,0,0.25)'
+            }}
+          >
+            {appState.toast.message}
           </div>
         )}
 
@@ -4750,7 +4803,7 @@ if (!appState.showAddItem) {
         )}
 
         {/* Daily Limit Modal */}
-        {appState.showLimitModal && (
+        {appState.showLimitModal && appState.limitModalType === 'swipes' && (
           <div style={{
             position: 'fixed',
             top: 'max(0px, env(safe-area-inset-top))',
@@ -6648,31 +6701,6 @@ if (!appState.showAddItem) {
                     </button>
                   </div>
 
-                  <div style={{ marginBottom: '20px' }}>
-                    <h5 style={{ marginBottom: '10px' }}>Daily Stats</h5>
-                    <div style={{
-                      background: '#f5f5f5',
-                      borderRadius: '10px',
-                      padding: '15px'
-                    }}>
-                      <p style={{ margin: '0 0 5px 0', fontSize: '14px' }}>
-                        Interests today: {appState.dailySwipeCount}/{appState.maxDailySwipes}
-                      </p>
-                      <div style={{
-                        background: '#ddd',
-                        borderRadius: '5px',
-                        height: '8px',
-                        overflow: 'hidden'
-                      }}>
-                        <div style={{
-                          background: '#4CAF50',
-                          height: '100%',
-                          width: `${(appState.dailySwipeCount / appState.maxDailySwipes) * 100}%`,
-                          transition: 'width 0.3s ease'
-                        }} />
-                      </div>
-                    </div>
-                  </div>
                 </>
               ) : (
                 <>
@@ -7515,31 +7543,6 @@ if (!appState.showAddItem) {
                   </button>
                 </div>
 
-                <div style={{ marginBottom: '20px' }}>
-                  <h5 style={{ marginBottom: '10px' }}>Daily Stats</h5>
-                  <div style={{
-                    background: '#f5f5f5',
-                    borderRadius: '10px',
-                    padding: '15px'
-                  }}>
-                    <p style={{ margin: '0 0 5px 0', fontSize: '14px' }}>
-                      Interests today: {appState.dailySwipeCount}/{appState.maxDailySwipes}
-                    </p>
-                    <div style={{
-                      background: '#ddd',
-                      borderRadius: '5px',
-                      height: '8px',
-                      overflow: 'hidden'
-                    }}>
-                      <div style={{
-                        background: '#4CAF50',
-                        height: '100%',
-                        width: `${(appState.dailySwipeCount / appState.maxDailySwipes) * 100}%`,
-                        transition: 'width 0.3s ease'
-                      }} />
-                    </div>
-                  </div>
-                </div>
 
                 {/* Buy Profile Sign Out and Delete Account Buttons */}
                 <div style={{ marginTop: '15px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
