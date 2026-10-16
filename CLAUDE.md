@@ -44,6 +44,19 @@ A Tinder-style local marketplace. Users swipe through nearby items, chat with se
 - **Anything that regenerates the native iOS/Android shells** — this is where a non-dev most easily ends up with a broken build. Warn me, explain why it's needed, and walk me through it.
 - **Data seeding / clearing** in any environment that isn't obviously throwaway dev data.
 
+## Standing permissions — do these WITHOUT asking
+When I give you a goal or a list, work it end to end and report at the end. You don't need my go-ahead for:
+- Code changes in `apps/web/src/` and `functions/src/` (writing code only; deploying is a guardrail above).
+- Running builds, tests, `npx cap sync` (sync only — not regenerating the native shells), and the local web server.
+- Committing to `main` with clear messages, and pushing to GitHub (`origin`). No force-push, no rewriting history.
+- Using the test accounts in `scripts/test-accounts.local.json` on the live Firebase: sign in, post/delete test listings, send interests and messages. Delete any test listings you create. Never touch other users' data.
+- Driving the app in Chrome (two users = `localhost` vs `127.0.0.1`, which keep separate storage) to verify changes on real screens.
+- Fixing bugs you find along the way, if they are small and clearly bugs. Anything that changes how the product behaves in a way I haven't decided goes in your report as a question.
+
+**Definition of done for a change:** web build passes; `node apps/web/src/__tests__/launch.regression.test.js` passes; the other tests in `apps/web/src/__tests__/` pass; for anything touching listings, interests or chat, `node scripts/live-e2e.js` passes; UI changes checked in Chrome when practical. Then commit.
+
+**Still stop and ask** for everything under Guardrails, App Store/TestFlight actions, spending money (including Claude API credits beyond small tests), deleting real data, and product decisions with real trade-offs.
+
 ## Known open issue (move resolved items out of here)
 - iOS *seller-mode* chat messages don't sync to Android. Buyer mode and same-device work fine. Edge case, not blocking, but relevant if we touch chat sync.
 
