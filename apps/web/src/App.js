@@ -473,7 +473,7 @@ const SwipeMarketplace = () => {
     newItemTitle: '',
     newItemPrice: '',
     newItemDescription: '',
-    newItemCondition: '',
+    newItemCondition: '', newItemCategory: '', aiPriceHint: '',
     newItemCity: '',
     lastPassedItem: null,
     canUndo: false,
@@ -1498,6 +1498,41 @@ const addListingPhotos = useCallback(async (fileList, source = 'camera') => {
       updateState({ selectedImages: [...currentImages, ...newImages] });
     }
   }, [appState.selectedImages, updateState]);
+
+  // "Auto-fill from photo": send the listing photos to the suggestListing Cloud
+  // Function (Claude) and pre-fill the form. The seller reviews before posting.
+  const autoFillListingFromPhotos = useCallback(async () => {
+    const photos = (appState.selectedImages || []).slice(0, 3);
+    if (photos.length === 0 || appState.aiFilling) return;
+    updateState({ aiFilling: true });
+    try {
+      // ~800px keeps each photo around 1k tokens while staying recognizable.
+      const images = await Promise.all(photos.map(p => downscaleDataUrl(p.url, 800, 0.7)));
+      const res = await firebaseNative.callFunction('suggestListing', { images });
+      if (!res.success) {
+        alert(res.error || "Auto-fill isn't available right now. Please fill it in yourself.");
+        return;
+      }
+      const d = res.result || {};
+      if (d.not_sellable_reason) {
+        alert(`We can't auto-fill this one: ${d.not_sellable_reason}`);
+        return;
+      }
+      updateState({
+        newItemTitle: SecurityUtils.sanitizeInput(d.title || ''),
+        newItemDescription: SecurityUtils.sanitizeInput(d.description || ''),
+        newItemCondition: d.condition || '',
+        newItemCategory: d.category || '',
+        newItemPrice: d.price_suggested ? String(d.price_suggested) : '',
+        aiPriceHint: (d.price_low && d.price_high) ? `Similar items usually sell for $${d.price_low}–$${d.price_high}` : ''
+      });
+    } catch (err) {
+      console.warn('autoFillListingFromPhotos failed:', err?.message);
+      alert("Auto-fill isn't available right now. Please fill it in yourself.");
+    } finally {
+      updateState({ aiFilling: false });
+    }
+  }, [appState.selectedImages, appState.aiFilling, updateState]);
 
   // Take a photo with the native camera via the Capacitor Camera plugin.
   // We do NOT use an <input type="file" capture> here: on iOS the live camera
@@ -5368,7 +5403,7 @@ if (!appState.showAddItem) {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px' }}>
             <h2 style={{ margin: 0, color: '#333', fontSize: '24px' }}>List New Item</h2>
             <button
-              onClick={() => updateState({ showAddItem: false, selectedImages: [], newItemTitle: '', newItemPrice: '', newItemDescription: '', newItemCondition: '', newItemCity: '' })}
+              onClick={() => updateState({ showAddItem: false, selectedImages: [], newItemTitle: '', newItemPrice: '', newItemDescription: '', newItemCondition: '', newItemCategory: '', aiPriceHint: '', newItemCity: '' })}
               style={{
                 background: 'none',
                 border: 'none',
@@ -5524,6 +5559,28 @@ if (!appState.showAddItem) {
             </div>
           </div>
 
+          {appState.selectedImages && appState.selectedImages.length > 0 && (
+            <button
+              type="button"
+              onClick={autoFillListingFromPhotos}
+              disabled={appState.aiFilling}
+              style={{
+                width: '100%',
+                marginBottom: '20px',
+                padding: '14px',
+                borderRadius: '10px',
+                border: 'none',
+                background: appState.aiFilling ? '#b8b8d8' : 'linear-gradient(135deg, #667eea, #764ba2)',
+                color: 'white',
+                fontSize: '16px',
+                fontWeight: 'bold',
+                cursor: appState.aiFilling ? 'default' : 'pointer'
+              }}
+            >
+              {appState.aiFilling ? 'Reading your photo…' : '✨ Auto-fill from photo'}
+            </button>
+          )}
+
           {/* Item Details Form */}
           <div style={{ marginBottom: '20px' }}>
             <label style={{ display: 'block', marginBottom: '8px', color: '#333', fontWeight: 'bold' }}>
@@ -5563,6 +5620,11 @@ if (!appState.showAddItem) {
                 boxSizing: 'border-box'
               }}
             />
+            {appState.aiPriceHint && (
+              <div style={{ marginTop: '6px', fontSize: '13px', color: '#667eea' }}>
+                {appState.aiPriceHint}
+              </div>
+            )}
           </div>
 
           <div style={{ marginBottom: '20px' }}>
@@ -5676,6 +5738,7 @@ if (!appState.showAddItem) {
                 title: SecurityUtils.sanitizeInputFinal(appState.newItemTitle),
                 price: appState.newItemPrice,
                 condition: appState.newItemCondition,
+                category: appState.newItemCategory || undefined,
                 city: SecurityUtils.sanitizeInputFinal(appState.newItemCity),
                 // also set `location` since the feed filter checks city||location
                 location: SecurityUtils.sanitizeInputFinal(appState.newItemCity),
@@ -5725,7 +5788,7 @@ if (!appState.showAddItem) {
                 newItemTitle: '',
                 newItemPrice: '',
                 newItemDescription: '',
-                newItemCondition: '',
+                newItemCondition: '', newItemCategory: '', aiPriceHint: '',
                 newItemCity: ''
               });
 
@@ -8235,7 +8298,7 @@ if (!appState.showAddItem) {
               newItemTitle: '',
               newItemPrice: '',
               newItemDescription: '',
-              newItemCondition: '',
+              newItemCondition: '', newItemCategory: '', aiPriceHint: '',
               newItemCity: '',
               currentView: 'swipe',
               showChats: false,

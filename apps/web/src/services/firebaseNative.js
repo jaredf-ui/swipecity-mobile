@@ -966,6 +966,18 @@ export class FirebaseNativeService {
     return response;
   }
 
+  // Call an HTTPS callable Cloud Function over REST (the callable protocol:
+  // POST {data}, Bearer ID token -> {result} or {error}). Default region.
+  async callFunction(name, data) {
+    if (!this.currentUser?.uid) return { success: false, error: 'Please sign in first.' };
+    const url = `https://us-central1-${this.projectId}.cloudfunctions.net/${name}`;
+    const response = await this._fsRequest('POST', url, { data });
+    if (!response.ok || response.data?.error) {
+      return { success: false, error: response.data?.error?.message || null };
+    }
+    return { success: true, result: response.data?.result };
+  }
+
   _docId(name) {
     return (name || '').split('/').pop();
   }

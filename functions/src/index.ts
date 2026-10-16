@@ -265,3 +265,4 @@ export const cleanupUserData = functions.auth.user().onDelete(async (user) => {
   await Promise.all(cleanupPromises);
   console.log(`Cleaned up data for deleted user: ${userId}`);
 });
+export { suggestListing } from './suggestListing';
